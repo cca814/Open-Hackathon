@@ -77,10 +77,15 @@ control MyIngress(inout headers_t headers,
         standard_metadata.egress_spec = CPU_PORT;
     }
 
+    // Measurement only: forwarding does not depend on these (see stats/).
+    counter(STAT_COUNT, CounterType.packets_and_bytes) stats;
+    counter(512, CounterType.packets_and_bytes) port_rx;
+
     apply {
         metadata.connection_matched = 0;
         metadata.icrc_dirty = 0;
         headers.packet_in.setInvalid();
+        port_rx.count((bit<32>)standard_metadata.ingress_port);
 
         if (standard_metadata.parser_error != error.NoError ||
             standard_metadata.checksum_error != 0 ||
@@ -88,6 +93,7 @@ control MyIngress(inout headers_t headers,
             !headers.ipv4.isValid() ||
             !headers.udp.isValid() ||
             !headers.bth.isValid()) {
+            stats.count(STAT_DROP_MALFORMED);
             drop();
             return;
         }
@@ -100,6 +106,7 @@ control MyIngress(inout headers_t headers,
             headers.bth.transport_header_version != 0 ||
             (headers.bth.opcode != BTH_OP_RC_SEND_ONLY &&
              headers.bth.opcode != BTH_OP_RC_ACK)) {
+            stats.count(STAT_DROP_UNSUPPORTED);
             drop();
             return;
         }
@@ -107,6 +114,7 @@ control MyIngress(inout headers_t headers,
         if (headers.bth.opcode == BTH_OP_RC_ACK &&
             (!headers.aeth.isValid() || headers.udp.len != 28 ||
              headers.bth.pad_count != 0)) {
+            stats.count(STAT_DROP_BAD_ACK);
             drop();
             return;
         }
@@ -117,12 +125,14 @@ control MyIngress(inout headers_t headers,
                     32w16 + (bit<32>)headers.ipv4.total_len ||
                 headers.packet_out.egress_port >= (bit<16>)DROP_PORT ||
                 headers.packet_out.egress_port == (bit<16>)CPU_PORT) {
+                stats.count(STAT_DROP_BAD_PACKET_OUT);
                 drop();
                 return;
             }
             standard_metadata.egress_spec =
                 (PORT_T)headers.packet_out.egress_port;
             headers.packet_out.setInvalid();
+            stats.count(STAT_PACKET_OUT);
             return;
         }
 
@@ -130,22 +140,28 @@ control MyIngress(inout headers_t headers,
             standard_metadata.packet_length <
                 32w14 + (bit<32>)headers.ipv4.total_len ||
             headers.ipv4.ttl <= 1) {
+            stats.count(STAT_DROP_INGRESS);
             drop();
             return;
         }
 
         connections.apply();
         if (metadata.connection_matched == 0) {
+            stats.count(STAT_DROP_MISS);
             return;
         }
         if (standard_metadata.egress_spec == CPU_PORT ||
             standard_metadata.egress_spec == DROP_PORT) {
+            stats.count(STAT_DROP_EGRESS);
             drop();
             return;
         }
 
         if (metadata.icrc_dirty == 1) {
+            stats.count(STAT_PUNT_ICRC);
             request_icrc_repair();
+        } else {
+            stats.count(STAT_FAST_PATH);
         }
     }
 }
