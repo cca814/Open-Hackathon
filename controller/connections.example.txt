@@ -1,0 +1,4 @@
+table_add MyIngress.connections MyIngress.translate_connection 1 10.0.0.1 10.0.0.101 9001 0x04 => 0x020000000102 0x020000000002 10.0.0.102 10.0.0.2 50001 200 65535 1000 0 2
+table_add MyIngress.connections MyIngress.translate_connection 2 10.0.0.2 10.0.0.102 9002 0x11 => 0x020000000101 0x020000000001 10.0.0.101 10.0.0.1 50002 100 65535 16776216 0 1
+table_add MyIngress.connections MyIngress.translate_connection 2 10.0.0.2 10.0.0.102 9002 0x04 => 0x020000000101 0x020000000001 10.0.0.101 10.0.0.1 50002 100 65535 16773216 0 1
+table_add MyIngress.connections MyIngress.translate_connection 1 10.0.0.1 10.0.0.101 9001 0x11 => 0x020000000102 0x020000000002 10.0.0.102 10.0.0.2 50001 200 65535 4000 0 2
