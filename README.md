@@ -10,6 +10,13 @@ Run from the repository root; the output is `build/main.json`.
 make -f p4/Makefile build
 ```
 
+## Controller
+
+`controller/controller.py` runs on the interface wired to the switch CPU port (510). The switch sends it packets whose headers it rewrote, prefixed with a 2-byte `packet_in` header (egress port). The controller recomputes the RoCEv2 ICRC and sends them back with the same 2 bytes as `packet_out`. It needs root (raw sockets) and only the Python standard library.
+
+By default the experiment assumes the RC connections are already established and the switch already holds the rules in `controller/connections.example.txt`, so the controller only repairs ICRCs.
+
+
 ## Scapy
 
 Use scapy to test the P4 and controller behavior on one machine without real RoCE support. `scapy/client.py` and `scapy/server.py` emulate the two RDMA nodes, and BMv2 runs the P4 program on veth pairs.
@@ -41,6 +48,7 @@ Run from the repository root. `simple_switch`, the controller and `server.py` ke
 
    ```
    simple_switch_CLI --thrift-port 9090 < controller/connections.example.txt
+   sudo python3 controller/controller.py -i ctl-cpu -v
    sudo python3 scapy/server.py
    ```
 
