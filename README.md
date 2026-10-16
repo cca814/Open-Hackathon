@@ -71,3 +71,11 @@ Run from the repository root. `simple_switch`, the controller and `server.py` ke
    ```
    sudo scapy/veth.sh down
    ```
+
+## Statistics
+
+`stats/` measures correctness, latency, throughput, loss and scaling of the switch and controller with the same scapy nodes, comparing a direct veth link, the BMv2 fast path and the controller ICRC path. It builds and wires everything itself and writes charts and a report; see [stats/README.md](stats/README.md) for the test plan.
+
+```
+sudo python3 stats/suite.py --quick
+```
