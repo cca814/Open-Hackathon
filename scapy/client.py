@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Emulate the RDMA client (node A) in front of the P4 switch and report each check.
+
+Runs the rdma/ echo exchange against server.py, then the retransmission,
+sequence-error and drop checks, printing PASS/FAIL/SKIP per check.
+"""
 from __future__ import annotations
 
 import argparse
