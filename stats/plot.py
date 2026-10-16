@@ -357,9 +357,16 @@ class Report:
             ax.set_ylabel("fraction of packets")
             finish(fig, self.figures / "t4_controller_cdf.png", "T4 controller service time",
                    "idle (one message in flight) vs under load")
-        table = [["path", "capture", "kind", "stage", "n", "p50 µs", "p99 µs"]] + [
-            [r["path"], r["capture"], r["kind"], r["stage"], r["n"], r["p50"], r["p99"]]
-            for r in rows]
+        pivot = defaultdict(dict)
+        for r in rows:
+            pivot[(r["path"], r["capture"], r["kind"])][r["stage"]] = r
+        table = [["path", "capture", "packet", "n", "total p50 µs", "total p99 µs",
+                  "BMv2 pass 1 p50", "controller p50", "BMv2 pass 2 p50"]]
+        for (path, capture, kind), stages in sorted(pivot.items()):
+            total = stages.get("total_us", {})
+            table.append([path, capture, KIND_LABEL.get(kind, kind), total.get("n"),
+                          total.get("p50"), total.get("p99")] +
+                         [stages.get(s, {}).get("p50") for s in STAGE_LABEL])
         self.add("T4 延遲拆解", "以交換器三個介面的 pcap 時間戳拆出 BMv2 第一次處理、controller "
                  "往返（含 veth 與 socket）、packet_out 回到 BMv2 後的第二次處理。",
                  "t4_stages.png" if bars else None, table)
