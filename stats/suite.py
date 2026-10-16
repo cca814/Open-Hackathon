@@ -535,6 +535,10 @@ def main(argv=None) -> int:
 
     # Children run as root; .pyc files would leave root-owned __pycache__ in the checkout.
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+    # Started in the background (nohup ... &), SIGINT arrives ignored and the ignore is
+    # inherited, so the Python children would not stop on SIGINT. A handler resets to the
+    # default on exec.
+    signal.signal(signal.SIGINT, signal.default_int_handler)
     args.out.mkdir(parents=True, exist_ok=True)
     suite = Suite(args)
     log(f"results in {args.out}")
