@@ -533,6 +533,8 @@ def main(argv=None) -> int:
     if busy:
         sys.exit(f"ports {busy} are in use: stop the running switch/server/responder first")
 
+    # Children run as root; .pyc files would leave root-owned __pycache__ in the checkout.
+    os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
     args.out.mkdir(parents=True, exist_ok=True)
     suite = Suite(args)
     log(f"results in {args.out}")

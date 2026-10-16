@@ -94,6 +94,13 @@ def ramp(n: int) -> list[str]:
             else BLUE_RAMP[i * len(BLUE_RAMP) // n] for i in range(n)]
 
 
+def zero_based(axes) -> None:
+    """Common 0..max y range; call after plotting (set_ylim on one panel freezes autoscale)."""
+    top = max(ax.get_ylim()[1] for ax in axes)
+    for ax in axes:
+        ax.set_ylim(0, top)
+
+
 def finish(fig, path: Path, title: str, subtitle: str = "", legend_title: str | None = None):
     """Title block above, one shared legend below (only for two or more series)."""
     h = fig.get_figheight()
@@ -108,6 +115,9 @@ def finish(fig, path: Path, title: str, subtitle: str = "", legend_title: str | 
         for handle, label in zip(*ax.get_legend_handles_labels()):
             if not label.startswith("_"):
                 handles.setdefault(label, handle)
+    paths = list(PATH_LABEL.values())
+    if set(handles) <= set(paths):  # same order in every figure, whichever panel comes first
+        handles = {label: handles[label] for label in paths if label in handles}
     bottom = 0
     if len(handles) > 1:
         fig.legend(list(handles.values()), list(handles.keys()), loc="lower center",
@@ -284,7 +294,7 @@ class Report:
                  "t2_latency_cdf.png", table)
 
         if len(sizes) > 1:
-            fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
+            fig, axes = plt.subplots(1, 2, figsize=(11, 4))
             for ax, stat in zip(axes, ("p50", "p99")):
                 for path in PATHS:
                     points = defaultdict(list)
@@ -299,7 +309,7 @@ class Report:
                 ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:g}"))
                 ax.set_xlabel("Send payload (bytes, log2)")
                 ax.set_title(f"{stat} one-way Send delay")
-                ax.set_ylim(bottom=0)
+            zero_based(axes)
             axes[0].set_ylabel("µs")
             finish(fig, self.figures / "t3_latency_size.png", "T3 latency vs message size",
                    "1..256 B, one packet per message")
@@ -437,14 +447,13 @@ class Report:
         processes = [p for p in ("switch", "controller", "responder", "bench")
                      if any(num(r.get(f"cpu_{p}")) is not None for r in rows)]
         if processes:
-            fig, axes = plt.subplots(1, len(processes), figsize=(3.2 * len(processes), 3.8),
-                                     sharey=True)
+            fig, axes = plt.subplots(1, len(processes), figsize=(3.2 * len(processes), 3.8))
             axes = list(axes) if len(processes) > 1 else [axes]
             for ax, process in zip(axes, processes):
                 series(ax, f"cpu_{process}")
                 ax.set_title(process)
-                ax.set_ylim(bottom=0)
                 ax.set_xlabel("offered Sends/s (log)")
+            zero_based(axes)
             axes[0].set_ylabel("CPU % (100 = one core)")
             finish(fig, self.figures / "t9_cpu.png", "T9 CPU use per process",
                    "average over each run, children included")

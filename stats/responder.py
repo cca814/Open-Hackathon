@@ -8,7 +8,8 @@ NAK: it counts the sequence errors an RC receiver would NAK instead, since the
 load generator does not retransmit.
 
 The load generator (bench.py) controls runs over TCP, newline-delimited JSON:
-  {"type": "start", "echo": bool, "ack_every": int, "out": path}  -> {"type": "started"}
+  {"type": "start", "echo": bool, "ack_every": int, "size": int, "out": path}
+      -> {"type": "started"}; with echo, Send templates of `size` are built first
   {"type": "stop"}  -> {"type": "stopped", ...summary}
 Frames that arrive outside a run are ignored.
 """
@@ -83,9 +84,11 @@ class Responder:
             return
         for message in messages:
             if message.get("type") == "start":
-                self.port.drain()
                 for conn in self.by_qp.values():
                     conn.reset()
+                    if message.get("echo") and message.get("size"):
+                        conn.frames.send_only(0, int(message["size"]))  # build before timing
+                self.port.drain()
                 self.run = Run(message)
                 self.control.send({"type": "started"})
             elif message.get("type") == "stop":

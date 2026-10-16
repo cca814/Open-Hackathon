@@ -37,15 +37,23 @@ def tag(i: int, size: int) -> bytes:
     return data[-size:] if size < 8 else data + bytes(size - 8)
 
 
-def run_latency(args, connections, port: RawPort, control: roce.Channel) -> dict:
+def prebuilt(connections, size: int) -> list[Frames]:
+    """Templates for every connection, so no message pays for a scapy build (~ms)."""
     frames = [Frames(t.client) for t in connections]
+    for f in frames:
+        f.send_only(0, size)
+    return frames
+
+
+def run_latency(args, connections, port: RawPort, control: roce.Channel) -> dict:
+    frames = prebuilt(connections, args.size)
     by_qp = {t.client.qp: i for i, t in enumerate(connections)}
     next_psn = [args.psn] * len(connections)
     echoes = [0] * len(connections)
     rows, lost_ack, lost_echo = [], 0, 0
     port.drain()
-    control.request({"type": "start", "echo": not args.no_echo, "ack_every": 1,
-                     "out": f"{args.out}.server.csv"})
+    control.request({"type": "start", "echo": not args.no_echo, "ack_every": 1, "size": args.size,
+                     "out": f"{args.out}.server.csv"}, timeout=120)
     for i in range(args.warmup + args.count):
         c = i % len(connections)
         psn, next_psn[c] = next_psn[c], (next_psn[c] + 1) % PSN_MOD
@@ -102,7 +110,7 @@ def collect_acks(iface, by_qp, out, ready, stop) -> None:
 
 
 def run_throughput(args, connections, port: RawPort, control: roce.Channel) -> dict:
-    frames = [Frames(t.client) for t in connections]
+    frames = prebuilt(connections, args.size)
     by_qp = {t.client.qp: i for i, t in enumerate(connections)}
     count = max(1, int(args.rate * args.duration))
     k = len(connections)
