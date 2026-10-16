@@ -16,6 +16,20 @@ make -f p4/Makefile build
 
 By default the experiment assumes the RC connections are already established and the switch already holds the rules in `controller/connections.example.txt`, so the controller only repairs ICRCs.
 
+### RC-state mode (optional, experimental)
+
+Not used by the default setup, which assumes the connections are already established. This mode follows the design in `hackthon.md`: every node opens its RC connection to the switch, and the controller is the far end of each one (`controller/rc_state.py`).
+
+1. When a node sends a REQ for a virtual IP, the controller opens connections to the nodes behind that IP.
+2. Once all of them have answered with a REP, the controller installs the connection rules, sends RTU to those nodes, and only then sends REP to the initiator.
+3. ACKs end at the controller and are regenerated toward the sender once every receiver has acknowledged.
+
+The switch must start without connection rules. The controller installs them through `simple_switch_CLI`, so that binary must be on `PATH`.
+
+```
+sudo -E env "PATH=$PATH" python3 controller/controller.py -i ctl-cpu -v \
+    --rc-config controller/rc_config.json --thrift-port 9090
+```
 
 ## Scapy
 
