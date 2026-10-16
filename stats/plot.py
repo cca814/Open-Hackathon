@@ -45,7 +45,7 @@ KIND_LABEL = {"send": "client Send", "ack": "server ACK", "echo": "server echo S
 plt.rcParams.update({
     "figure.facecolor": SURFACE, "axes.facecolor": SURFACE, "savefig.facecolor": SURFACE,
     "axes.edgecolor": AXIS, "axes.linewidth": 0.8, "axes.labelcolor": INK_2,
-    "axes.titlecolor": INK, "axes.titlesize": 11, "axes.titleweight": "semibold",
+    "axes.titlecolor": INK, "axes.titlesize": 11, "axes.titleweight": "bold",
     "axes.titlelocation": "left", "axes.labelsize": 9.5,
     "axes.spines.top": False, "axes.spines.right": False,
     "axes.grid": True, "grid.color": GRID, "grid.linewidth": 0.7, "grid.linestyle": "-",
@@ -86,11 +86,35 @@ def marker(ax, xs, ys, color, label=None, **kw):
             label=label, **kw)
 
 
-def finish(fig, path: Path, title: str, subtitle: str = "") -> None:
-    fig.suptitle(title, x=0.01, ha="left", fontsize=13, fontweight="semibold", color=INK)
+def ramp(n: int) -> list[str]:
+    """n ordinal steps spread over the blue ramp, light to dark."""
+    if n == 1:
+        return [BLUE_RAMP[len(BLUE_RAMP) // 2]]
+    return [BLUE_RAMP[round(i * (len(BLUE_RAMP) - 1) / (n - 1))] if n <= len(BLUE_RAMP)
+            else BLUE_RAMP[i * len(BLUE_RAMP) // n] for i in range(n)]
+
+
+def finish(fig, path: Path, title: str, subtitle: str = "", legend_title: str | None = None):
+    """Title block above, one shared legend below (only for two or more series)."""
+    h = fig.get_figheight()
+    fig.text(0.01, 1 - 0.15 / h, title, ha="left", va="top", fontsize=13, fontweight="bold",
+             color=INK)
+    top = 1 - 0.5 / h
     if subtitle:
-        fig.text(0.01, 0.935, subtitle, ha="left", fontsize=9, color=INK_2)
-    fig.tight_layout(rect=(0, 0, 1, 0.92 if subtitle else 0.95))
+        fig.text(0.01, 1 - 0.46 / h, subtitle, ha="left", va="top", fontsize=9, color=INK_2)
+        top = 1 - 0.75 / h
+    handles = {}
+    for ax in fig.axes:
+        for handle, label in zip(*ax.get_legend_handles_labels()):
+            if not label.startswith("_"):
+                handles.setdefault(label, handle)
+    bottom = 0
+    if len(handles) > 1:
+        fig.legend(list(handles.values()), list(handles.keys()), loc="lower center",
+                   bbox_to_anchor=(0.5, 0.01), ncol=min(len(handles), 6), title=legend_title,
+                   title_fontsize=8.5)
+        bottom = (0.4 + (0.22 if legend_title else 0)) / h
+    fig.tight_layout(rect=(0, bottom, 1, top))
     fig.savefig(path, dpi=144)
     plt.close(fig)
 
@@ -140,7 +164,7 @@ class Report:
                 ax.add_patch(plt.Rectangle((x + 0.04, y + 0.06), 0.92, 0.88,
                                            color=colors[result], linewidth=0))
                 ax.text(x + 0.5, y + 0.5, result, ha="center", va="center", fontsize=7,
-                        color="white" if result != "SKIP" else INK, fontweight="semibold")
+                        color="white" if result != "SKIP" else INK, fontweight="bold")
         ax.set_xlim(0, len(runs))
         ax.set_ylim(len(checks), 0)
         ax.set_xticks([x + 0.5 for x in range(len(runs))], runs, rotation=30, ha="right")
@@ -160,7 +184,9 @@ class Report:
                  "t1_correctness.png", table)
 
     def t1_counters(self) -> None:
-        rows = [r for r in read(self.summary / "t1_counters.csv") if r["rep"] == "1"]
+        order = ["translate", "translate-psn-wrap", "passthrough"]
+        rows = sorted((r for r in read(self.summary / "t1_counters.csv") if r["rep"] == "1"),
+                      key=lambda r: order.index(r["scenario"]) if r["scenario"] in order else 9)
         if not rows:
             return
         names = [k for k in rows[0] if k not in ("scenario", "rep") and
@@ -175,7 +201,6 @@ class Report:
         ax.invert_yaxis()
         ax.set_xlabel("packets during one client.py run")
         ax.grid(axis="y", visible=False)
-        ax.legend(loc="lower right")
         finish(fig, self.figures / "t8_counters_t1.png", "T8 switch counters during T1",
                "where every packet of a correctness run ended up in ingress")
         self.add("T8 交換器計數器（T1 期間）", "16 種應丟棄封包應分別落在 drop_* 原因；"
@@ -222,11 +247,14 @@ class Report:
         ax.set_xlabel("one-way Send delay, client → responder (µs, log)")
         ax.set_ylabel("fraction of messages")
         ax.set_title(f"CDF, {size} B payload")
-        ax.legend(loc="lower right")
         if box_data:
-            parts = bx.boxplot(box_data, vert=False, widths=0.45, showfliers=False,
-                               patch_artist=True, medianprops={"color": INK, "linewidth": 1.5},
-                               whiskerprops={"color": MUTED}, capprops={"color": MUTED})
+            style = dict(widths=0.45, showfliers=False, patch_artist=True,
+                         medianprops={"color": INK, "linewidth": 1.5},
+                         whiskerprops={"color": MUTED}, capprops={"color": MUTED})
+            try:
+                parts = bx.boxplot(box_data, orientation="horizontal", **style)
+            except TypeError:  # matplotlib < 3.10
+                parts = bx.boxplot(box_data, vert=False, **style)
             for patch, path in zip(parts["boxes"], box_paths):
                 patch.set(facecolor=PATH_COLOR[path], alpha=0.35, edgecolor=PATH_COLOR[path])
             bx.set_yticks(range(1, len(box_paths) + 1), box_paths)
@@ -273,7 +301,6 @@ class Report:
                 ax.set_title(f"{stat} one-way Send delay")
                 ax.set_ylim(bottom=0)
             axes[0].set_ylabel("µs")
-            axes[0].legend(loc="upper left")
             finish(fig, self.figures / "t3_latency_size.png", "T3 latency vs message size",
                    "1..256 B, one packet per message")
             self.add("T3 延遲對訊息大小", "ICRC 是對整個封包算 CRC，controller 的成本應隨大小略增。",
@@ -301,18 +328,13 @@ class Report:
                     if not width:
                         continue
                     ax.barh(i, width, left=left, height=0.55, color=SLOTS[j],
-                            edgecolor=SURFACE, linewidth=2,
-                            label=STAGE_LABEL[stage] if i == 0 or stage not in
-                            {s for _, st in bars[:i] for s in st} else None)
+                            edgecolor=SURFACE, linewidth=2, label=STAGE_LABEL[stage])
                     left += width
                 ax.text(left, i, f"  {left:,.0f} µs", va="center", fontsize=8, color=INK_2)
             ax.set_yticks(range(len(bars)), [b[0] for b in bars])
             ax.invert_yaxis()
             ax.set_xlabel("median µs from switch ingress to switch egress (pcap timestamps)")
             ax.grid(axis="y", visible=False)
-            handles, labels = ax.get_legend_handles_labels()
-            unique = dict(zip(labels, handles))
-            ax.legend(unique.values(), unique.keys(), loc="lower right")
             ax.set_xlim(right=ax.get_xlim()[1] * 1.12)
             finish(fig, self.figures / "t4_stages.png", "T4 where the time goes inside the switch",
                    "median per stage, one message in flight")
@@ -323,15 +345,16 @@ class Report:
                 service[r["capture"]].append(num(r["controller_us"]))
         if service:
             fig, ax = plt.subplots(figsize=(8, 3.8))
+            names = {"latency": "idle, one message in flight", "load": "under load"}
             for i, (capture, values) in enumerate(sorted(service.items())):
                 values.sort()
                 ax.plot(values, [(k + 1) / len(values) for k in range(len(values))],
-                        color=SLOTS[i], label=f"{capture} ({len(values)} packets)")
+                        color=SLOTS[i], label=f"{names.get(capture, capture)} "
+                        f"({len(values)} packets)")
             ax.set_xscale("log")
             ax.xaxis.set_major_formatter(FuncFormatter(compact))
             ax.set_xlabel("packet_in → packet_out on the CPU port (µs, log)")
             ax.set_ylabel("fraction of packets")
-            ax.legend(loc="lower right")
             finish(fig, self.figures / "t4_controller_cdf.png", "T4 controller service time",
                    "idle (one message in flight) vs under load")
         table = [["path", "capture", "kind", "stage", "n", "p50 µs", "p99 µs"]] + [
@@ -375,7 +398,6 @@ class Report:
         ax.yaxis.set_major_formatter(FuncFormatter(compact))
         ax.set_ylabel("delivered Sends/s at the responder (log)")
         ax.set_title("goodput")
-        ax.legend(loc="upper left")
         series(bx, "loss_pct")
         bx.set_ylabel("% of Sends never delivered")
         bx.set_ylim(bottom=0)
@@ -390,7 +412,6 @@ class Report:
             ax.yaxis.set_major_formatter(FuncFormatter(compact))
             ax.set_title(f"{stat} one-way delay, client → responder")
         axes[0].set_ylabel("µs (log)")
-        axes[0].legend(loc="upper left")
         finish(fig, self.figures / "t5_latency_load.png", "T5 latency under load",
                "queueing shows up as the knee where p99 leaves the idle level")
 
@@ -401,7 +422,6 @@ class Report:
         series(axes[1], "reordered")
         axes[1].set_ylabel("Sends older than the expected PSN")
         axes[1].set_title("reordered arrivals")
-        axes[0].legend(loc="upper left")
         for ax in axes:
             ax.set_ylim(bottom=0)
         finish(fig, self.figures / "t6_order.png", "T6 ordering under load",
@@ -419,7 +439,6 @@ class Report:
                 ax.set_ylim(bottom=0)
                 ax.set_xlabel("offered Sends/s (log)")
             axes[0].set_ylabel("CPU % (100 = one core)")
-            axes[0].legend(loc="upper left", fontsize=7.5)
             finish(fig, self.figures / "t9_cpu.png", "T9 CPU use per process",
                    "average over each run, children included")
 
@@ -433,20 +452,16 @@ class Report:
             axes = list(axes) if len(funnel_paths) > 1 else [axes]
             for ax, path in zip(axes, funnel_paths):
                 runs = by_path[path]
-                ramp = BLUE_RAMP[-len(runs):] if len(runs) <= len(BLUE_RAMP) else None
-                for i, r in enumerate(runs):
+                for r, color in zip(runs, ramp(len(runs))):
                     sent = num(r["sent"]) or 1
                     ys = [100 * (num(r.get(k)) or 0) / sent for k, _ in stages]
-                    color = ramp[i] if ramp else BLUE_RAMP[min(i * len(BLUE_RAMP) // len(runs),
-                                                              len(BLUE_RAMP) - 1)]
                     marker(ax, range(len(stages)), ys, color, f"{compact(num(r['offered_pps']))}/s")
                 ax.set_xticks(range(len(stages)), [s[1] for s in stages], rotation=20, ha="right")
                 ax.set_title(PATH_LABEL[path])
                 ax.set_ylim(0, 105)
             axes[0].set_ylabel("% of Sends still alive")
-            axes[-1].legend(title="offered", loc="lower left", fontsize=7.5, title_fontsize=8)
             finish(fig, self.figures / "t6_loss_funnel.png", "T6 where Sends are lost",
-                   "darker = higher offered rate")
+                   "darker = higher offered rate", legend_title="offered Sends/s")
 
         table = [["path", "offered/s", "achieved/s", "delivered/s", "loss %", "gaps", "reordered",
                   "owd p50 µs", "owd p99 µs", "switch CPU %", "controller CPU %"]]
@@ -496,7 +511,6 @@ class Report:
                        stat.split("_")[1])
         axes[1].set_ylabel("Send → ACK µs")
         axes[1].set_title("latency, round-robin over connections")
-        axes[1].legend(loc="upper left")
         pts = [(int(r["connections"]), num(r.get("loss_pct"))) for r in loaded
                if num(r.get("loss_pct")) is not None]
         if pts:
