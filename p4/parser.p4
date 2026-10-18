@@ -30,8 +30,9 @@ parser MyParser(packet_in packet,
 
     state parse_ipv4 {
         packet.extract(headers.ipv4);
-        transition select(headers.ipv4.ihl, headers.ipv4.frag_offset, headers.ipv4.protocol) {
-            (5, 0, IP_PROTO_UDP): parse_udp;
+        transition select(headers.ipv4.ihl, headers.ipv4.frag_offset,
+                          headers.ipv4.flags & 3w1, headers.ipv4.protocol) {
+            (5, 0, 0, IP_PROTO_UDP): parse_udp;
             default: accept;
         }
     }
