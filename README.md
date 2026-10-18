@@ -16,6 +16,40 @@ make -f p4/Makefile build
 
 By default the experiment assumes the RC connections are already established and the switch already holds the rules in `controller/connections.example.txt`, so the controller only repairs ICRCs.
 
+## RDMA
+
+Use Linux soft-roce to send and receive the RoCE packets. `rdma/client.c` is the client side which will send the RoCE packet. `rdma/server.c` is the server side which will receive the packet send from client. Since RDMA RC needs to exchange the connection details before start sending the packets, we use TCP connection first to exchange the necessary information, including the `qpn` and `gid`.
+
+### Run
+
+First need to install the dependencies and setup `rxe` device. The `rxe` device will be set in one of the existing network interface card, default is the first one (excluding `lo`).
+
+```
+cd rdma
+make env    # To specify the nic to embeded rxe, make INTF=<nic-name> env
+```
+
+Compile the server code and client code.
+
+```
+make client
+make server
+```
+
+Rum the server code.
+
+```
+./server <rxe_device_name> <gid_index>
+```
+
+Run the client code.
+
+```
+./client <rxe_device_name> <gid_index> <server_ip>
+```
+
+> [!NOTE]
+> To get the gid of the rxe device, you can run the command `ibv_devinfo -d <rxe_name> -v`. The gid index will be shown in the bottom. Use the one with RoCEv2 and IPv4 address.
 
 ## Scapy
 
