@@ -21,7 +21,6 @@ import struct
 import sys
 
 import icrc
-import rc_state
 
 ETH_P_ALL = 0x0003
 PACKET_OUTGOING = 4
@@ -43,6 +42,8 @@ def open_raw_socket(iface):
 
 
 def run(iface, byte_order=icrc.ICRC_LITTLE, cpu_header=True, verbose=False, rc=None):
+    if rc is not None:
+        import rc_state
     sock = open_raw_socket(iface)
     print(f"[controller] listening on {iface}, icrc byte-order={byte_order}, "
           f"cpu_header={cpu_header}, rc_state={'on' if rc else 'off'}", flush=True)
@@ -119,6 +120,12 @@ def main():
     iface = args.iface or autodetect_iface()
     rc = None
     if args.rc_config:
+        try:
+            import rc_state
+        except ModuleNotFoundError as error:
+            if error.name != "rc_state":
+                raise
+            ap.error("--rc-config requires rc_state.py; preconfigured MITM uses the default ICRC mode")
         if not args.cpu_header:
             ap.error("--rc-config needs the CPU header")
         rc = rc_state.RcState(rc_state.load_config(args.rc_config),

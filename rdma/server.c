@@ -4,12 +4,17 @@
 #include <stdlib.h>
 
 int main(int argc, char **argv) {
-  if (argc != 3) {
-    fprintf(stderr, "Usage: %s <device> <gid_index>\n", argv[0]);
+  RdmaOptions options;
+  int parsed = parse_rdma_options(argc, argv, 1, &options);
+  if (parsed != 0) {
+    return parsed < 0 ? 1 : 0;
+  }
+  const char *device_name = options.device_name;
+  int gid_index = options.gid_index;
+  PeerConfig config = {.sq_psn = 1, .rq_psn = 1};
+  if (options.config_file != NULL && load_peer_config(options.config_file, &config) != 0) {
     return 1;
   }
-  char *device_name = argv[1];
-  int gid_index = atoi(argv[2]);
 
   RdmaNode node;
 
@@ -78,40 +83,39 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // Both peers use PSN 1; only QPN and GID need to be exchanged.
-  ConnectInfo local = {.qpn = node.qp->qp_num}, remote = {0};
+  // Preconfiguration supplies P4's virtual peer; TCP supplies the real client.
+  ConnectInfo local = {.qpn = node.qp->qp_num}, remote = config.remote;
   if (ibv_query_gid(node.ctx, 1, gid_index, &local.gid) != 0) {
     fprintf(stderr, "Failed to query GID at index %d\n", gid_index);
     return 1;
   }
 
-  int fd = bind_server("10001");
-  if (fd < 0) {
-    return 1;
-  }
-
-  // Wire format: 4-byte QPN in network order, followed by the 16-byte GID.
-  uint32_t qpn = htonl(local.qpn);
-  unsigned char data[sizeof(qpn) + sizeof(local.gid.raw)];
-  memcpy(data, &qpn, sizeof(qpn));
-  memcpy(data + sizeof(qpn), local.gid.raw, sizeof(local.gid.raw));
-
-  if (send_connection_data(fd, data, sizeof(data)) != 0 ||
-      receive_connection_data(fd, data, sizeof(data)) != 0) {
+  if (options.config_file == NULL) {
+    int fd = bind_server("10001");
+    if (fd < 0) {
+      return 1;
+    }
+    // Original wire format: 4-byte QPN in network order + 16-byte GID.
+    uint32_t qpn = htonl(local.qpn);
+    unsigned char data[sizeof(qpn) + sizeof(local.gid.raw)];
+    memcpy(data, &qpn, sizeof(qpn));
+    memcpy(data + sizeof(qpn), local.gid.raw, sizeof(local.gid.raw));
+    if (send_connection_data(fd, data, sizeof(data)) != 0 ||
+        receive_connection_data(fd, data, sizeof(data)) != 0) {
+      close(fd);
+      fprintf(stderr, "Failed to exchange QPN and GID\n");
+      return 1;
+    }
     close(fd);
-    fprintf(stderr, "Failed to exchange QPN and GID\n");
-    return 1;
+    memcpy(&qpn, data, sizeof(qpn));
+    remote.qpn = ntohl(qpn);
+    memcpy(remote.gid.raw, data + sizeof(qpn), sizeof(remote.gid.raw));
   }
-  close(fd);
-
-  memcpy(&qpn, data, sizeof(qpn));
-  remote.qpn = ntohl(qpn);
-  memcpy(remote.gid.raw, data + sizeof(qpn), sizeof(remote.gid.raw));
 
   struct ibv_qp_attr rtr_attr = {.qp_state = IBV_QPS_RTR,
                                  .path_mtu = IBV_MTU_1024,
                                  .dest_qp_num = remote.qpn,
-                                 .rq_psn = 1,
+                                 .rq_psn = config.rq_psn,
 
                                  .max_dest_rd_atomic = 1,
                                  .min_rnr_timer = 12,
@@ -137,7 +141,7 @@ int main(int argc, char **argv) {
                                  .retry_cnt = 7,
                                  .rnr_retry = 7,
 
-                                 .sq_psn = 1,
+                                 .sq_psn = config.sq_psn,
                                  .max_rd_atomic = 1};
 
   int rts_ret = ibv_modify_qp(node.qp, &rts_attr,
@@ -161,10 +165,22 @@ int main(int argc, char **argv) {
 
   // Post RECV wr
   int ret = ibv_post_recv(node.qp, &recv_wr, &bad_wr);
+  if (ret != 0) {
+    fprintf(stderr, "ibv_post_recv failed: %s\n", strerror(ret));
+    return 1;
+  }
+  // Publish only after the receive buffer is posted, so the client can start.
+  if (options.config_file != NULL) {
+    if (write_connection_info(options.info_file, &local, &config) != 0) {
+      return 1;
+    }
+  }
+  printf("Receive buffer ready; waiting for the client.\n");
+  fflush(stdout);
 
   poll_complete(node.cq);
 
-  printf("Received Date: %s", buffer);
+  printf("Received data: %.4096s\n", buffer);
 
   return 0;
 }

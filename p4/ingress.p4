@@ -11,6 +11,24 @@ control MyIngress(inout headers_t headers,
         mark_to_drop(standard_metadata);
     }
 
+    // Pair access ports like an Ethernet bridge. Normal traffic is never NATed.
+    // RoCE still requires a matching MITM connection below.
+    action forward(PORT_T port) {
+        standard_metadata.egress_spec = port;
+    }
+
+    table forwarding {
+        key = {
+            standard_metadata.ingress_port: exact;
+        }
+        actions = {
+            forward;
+            drop;
+        }
+        size = 512;
+        const default_action = drop();
+    }
+
     action translate_connection(MAC_ADDR_T src_mac,
                                 MAC_ADDR_T dst_mac,
                                 IPV4_ADDR_T src_ip,
@@ -84,8 +102,62 @@ control MyIngress(inout headers_t headers,
 
         if (standard_metadata.parser_error != error.NoError ||
             standard_metadata.checksum_error != 0 ||
-            !headers.ethernet.isValid() ||
-            !headers.ipv4.isValid() ||
+            !headers.ethernet.isValid()) {
+            drop();
+            return;
+        }
+
+        // Validate IPv4 length before bridging; TCP/ICMP and IP options remain
+        // unparsed payload and are emitted unchanged, preserving their checksums.
+        if (headers.ipv4.isValid()) {
+            if (headers.ipv4.version != 4 || headers.ipv4.ihl < 5 ||
+                headers.ipv4.total_len < (bit<16>)headers.ipv4.ihl * 16w4) {
+                drop();
+                return;
+            }
+            if (!headers.packet_out.isValid() &&
+                standard_metadata.packet_length <
+                    32w14 + (bit<32>)headers.ipv4.total_len) {
+                drop();
+                return;
+            }
+        }
+
+        // CPU replies take the original, validated RoCE reinjection path below.
+        if (!headers.packet_out.isValid()) {
+            if (standard_metadata.ingress_port == CPU_PORT) {
+                drop();
+                return;
+            }
+            forwarding.apply();
+            if (standard_metadata.egress_spec == CPU_PORT ||
+                standard_metadata.egress_spec == DROP_PORT ||
+                standard_metadata.egress_spec == standard_metadata.ingress_port) {
+                drop();
+                return;
+            }
+
+            // ARP, TCP, ICMP, IPv6, etc. use the same transparent bridge even
+            // while RoCE uses the connection translation experiment.
+            if (!headers.ipv4.isValid()) {
+                return;
+            }
+            if (headers.ipv4.protocol != IP_PROTO_UDP) {
+                return;
+            }
+            // The translation path does not reassemble fragments or parse IP
+            // options, so it cannot safely classify these UDP datagrams.
+            if (headers.ipv4.ihl != 5 || headers.ipv4.frag_offset != 0 ||
+                (headers.ipv4.flags & 3w1) != 0) {
+                drop();
+                return;
+            }
+            if (headers.udp.isValid() && headers.udp.dst_port != UDP_PORT_ROCEV2) {
+                return;
+            }
+        }
+
+        if (!headers.ipv4.isValid() ||
             !headers.udp.isValid() ||
             !headers.bth.isValid()) {
             drop();

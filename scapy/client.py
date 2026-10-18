@@ -6,7 +6,7 @@ import socket
 import sys
 import time
 
-from scapy.all import ARP, IP, UDP, Ether, IPOption_NOP, Raw
+from scapy.all import IP, UDP, Ether, IPOption_NOP, Raw
 from scapy.contrib.roce import BTH
 
 import roce
@@ -281,14 +281,8 @@ class Client:
             ("TTL 1", send(IP, ttl=1)),
             ("bad IPv4 checksum", bytes(bad_checksum)),
             ("IPv4 total length beyond the frame", send(IP, len=len(send()[IP]) + 4)),
-            ("UDP destination port 4792", send(UDP, dport=4792)),
             ("ACK with payload", ack() / Raw(bytes(4))),
             ("ACK with pad count", ack(padcount=1)),
-            (
-                "ARP request",
-                Ether(src=me.mac, dst="ff:ff:ff:ff:ff:ff")
-                / ARP(hwsrc=me.mac, psrc=me.ip, pdst=me.remote_ip),
-            ),
         ]
 
     def expect_drop(self, frame) -> None:
