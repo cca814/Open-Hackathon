@@ -5,3 +5,7 @@
 /rdma/build/
 /*-connection.json
 /rdma/*-connection.json
+
+# Skills
+.agents
+skills-lock.json
