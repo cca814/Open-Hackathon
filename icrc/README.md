@@ -265,7 +265,8 @@ verified physical device BDFs. `GROUPS_FILE` is mounted read-only at
 The example values are not receiver discovery.
 
 Before launch, the operator must have working host drivers/firmware, usable
-ports, `/dev/infiniband`, and a mounted hugetlbfs at `HUGEPAGES_DIR` with enough
+ports, `/dev/infiniband`, and a mounted hugetlbfs at `/mnt/huge` (or the path set
+by `HUGEPAGES_DIR`) with enough
 free allocated hugepages. The container does not install host drivers, allocate
 hugepages, bind devices, change eSwitch mode or configure Node A. Docker binds
 the existing hugepage and RDMA-device directories; missing paths cause an error

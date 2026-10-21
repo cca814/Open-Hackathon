@@ -19,8 +19,8 @@ services:
         hard: -1
     volumes:
       - type: bind
-        source: ${HUGEPAGES_DIR:-/dev/hugepages}
-        target: /dev/hugepages
+        source: ${HUGEPAGES_DIR:-/mnt/huge}
+        target: /mnt/huge
         bind:
           create_host_path: false
       - type: bind
