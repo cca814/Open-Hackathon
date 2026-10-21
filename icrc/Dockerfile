@@ -5,16 +5,12 @@ FROM ${DOCA_IMAGE}
 
 USER root
 ARG EXPECTED_DOCA_VERSION=3.5.0098
-ENV DEBIAN_FRONTEND=noninteractive
 # Verified Arm SDK metadata locations; DPDK is outside the default search path.
 ENV PKG_CONFIG_PATH=/opt/mellanox/doca/lib/aarch64-linux-gnu/pkgconfig:/opt/mellanox/dpdk/lib/aarch64-linux-gnu/pkgconfig
 WORKDIR /opt/node-b
 
-# Retain the development base so SDK libraries and mlx5 providers match those
-# used for linking. No host driver/kernel packages are installed by this image.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential meson ninja-build pkg-config python3 \
-    && rm -rf /var/lib/apt/lists/*
+# The DOCA development image supplies the compiler, Meson/Ninja, pkg-config and
+# SDK libraries. Deliberately do not run apt-get: the DPU is shared.
 
 RUN pkg-config --modversion doca-common doca-flow doca-eth doca-dpdk-bridge libdpdk \
     && pkg-config --exact-version="${EXPECTED_DOCA_VERSION}" doca-common

@@ -13,6 +13,16 @@ DOCA ETH TX. See [AGENTS.md](AGENTS.md) for the three milestones.
 
 Verified on 2026-10-21. The VPN must be active to reach the private network.
 
+The DPU inventory maps the physical ports as follows:
+
+| Role | Netdev | PCI BDF | Link |
+| --- | --- | --- | --- |
+| Ingress / RX | `p0` | `0000:03:00.0` | Up |
+| Egress / TX | `p1` | `0000:03:00.1` | Up |
+
+These are the current verified values for `.env`; recheck them after hardware,
+firmware or port-topology changes.
+
 | Item | Value |
 | --- | --- |
 | Windows SSH config | `C:\Users\currychang\.ssh\config` |
@@ -240,6 +250,10 @@ digest containing the matching build; do not assume the release tag guarantees
 that exact package version. The retained development image keeps the same SDK
 libraries/providers at build and runtime, and the Meson build directory stays
 in place so its shared-library RUNPATH remains valid.
+The Dockerfile performs no package-manager operations: it does not run
+`apt-get update` or install packages on the shared DPU. The selected DOCA
+development image must already contain the compiler, Meson/Ninja, pkg-config
+and Python required by the build.
 
 Compose explicitly targets `linux/arm64`. Build natively on the DPU, or on an
 Arm builder; an x86 builder requires preconfigured Arm emulation. The following
