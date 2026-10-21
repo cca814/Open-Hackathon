@@ -297,7 +297,9 @@ DOCA 3.5 deprecates the global Flow resource API used by the existing adapter bu
 retains ABI support. Hardware builds define `DOCA_ALLOW_DEPRECATED_API` as the
 [documented compatibility option](https://networking-docs.nvidia.com/doca/archive/3-5-0/customer-affecting-changes),
 alongside `DOCA_ALLOW_EXPERIMENTAL_API`. Other compiler warnings remain errors.
-This is not a claim that all 3.2-derived source is already validated against 3.5.
+The Flow entry call uses the DOCA 3.5 typed basic-pipe API,
+`doca_flow_pipe_basic_add_entry`, as required by the installed 3.5 headers.
+Other target compilation and runtime behavior still need verification.
 The [NGC tag listing](https://catalog.ngc.nvidia.com/orgs/nvidia/doca/containers/doca/-/tags)
 is the source for the development-image tag.
 

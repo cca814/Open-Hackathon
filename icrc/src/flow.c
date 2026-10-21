@@ -115,7 +115,7 @@ doca_error_t flow_steer_roce(struct flow *flow)
     flow->failed = false;
     /* Match is fixed by the pipe; entry has no variable fields. */
     struct doca_flow_match entry_match = {0};
-    CHECK(doca_flow_pipe_add_entry(0, flow->pipe, &entry_match, 0, &actions,
+    CHECK(doca_flow_pipe_basic_add_entry(0, flow->pipe, &entry_match, 0, &actions,
           NULL, NULL, 0, flow, &flow->entry), done);
     CHECK(doca_flow_entries_process(flow->port, 0, 10000, 1), done);
     if (flow->failed || flow->processed != 1)
