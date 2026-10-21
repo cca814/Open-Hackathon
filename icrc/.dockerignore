@@ -1,0 +1,10 @@
+.git
+.tools
+build*
+**/__pycache__
+**/*.pyc
+.env
+.env.*
+config/*.json
+!config/groups.example.json
+node-b-inventory*.json

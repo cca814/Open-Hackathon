@@ -1,0 +1,45 @@
+services:
+  node-b:
+    image: icrc-node-b:doca-3.5.0098
+    platform: linux/arm64
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DOCA_IMAGE: ${DOCA_IMAGE:-nvcr.io/nvidia/doca/doca:devel-3.5.0}
+        EXPECTED_DOCA_VERSION: "3.5.0098"
+    # DOCA/DPDK access the DPU's physical devices and network namespace.
+    # This follows NVIDIA's BlueField development-container launch model.
+    privileged: true
+    network_mode: host
+    cpuset: "${LCORES:?Set LCORES to nine available DPU CPU cores}"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - type: bind
+        source: ${HUGEPAGES_DIR:-/dev/hugepages}
+        target: /dev/hugepages
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /dev/infiniband
+        target: /dev/infiniband
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${GROUPS_FILE:?Set GROUPS_FILE to your receiver group JSON file}
+        target: /etc/node-b/groups.json
+        read_only: true
+        bind:
+          create_host_path: false
+    command:
+      - "${RX_PCI:?Set RX_PCI to the verified ingress PCI BDF}"
+      - "${TX_PCI:?Set TX_PCI to the verified egress PCI BDF}"
+      - "${LCORES:?Set LCORES to nine available DPU CPU cores}"
+      - --groups
+      - /etc/node-b/groups.json
+    # Main is PID 1 and receives SIGTERM directly; allow TX draining/cleanup.
+    stop_grace_period: 60s
+    restart: "no"

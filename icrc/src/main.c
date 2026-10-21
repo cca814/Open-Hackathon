@@ -31,6 +31,7 @@
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <rte_eal.h>
@@ -143,14 +144,22 @@ static int start_rx(uint16_t port, struct rte_mempool *pool)
 
 int main(int argc, char **argv)
 {
-    if (argc != 4 || strcmp(argv[1], argv[2]) == 0) {
-        fprintf(stderr, "Usage: %s RX-PCI TX-PCI EAL-LCORE-LIST\n"
+    if ((argc != 4 && argc != 6) || (argc == 6 && strcmp(argv[4], "--groups")) || strcmp(argv[1], argv[2]) == 0) {
+        fprintf(stderr, "Usage: %s RX-PCI TX-PCI EAL-LCORE-LIST [--groups FILE]\n"
                 "Requires 9 available lcores (main + 8 workers), distinct physical devices.\n", argv[0]);
         return 2;
     }
+    struct groups *groups = NULL;
+    if (argc == 6) {
+        char error[256];
+        if (groups_load(argv[5], &groups, error, sizeof(error)) != 0) {
+            fprintf(stderr, "%s\n", error);
+            return 2;
+        }
+        printf("Loaded %zu groups / %zu members\n", groups->count, groups->member_count);
+    }
     char *eal[] = {argv[0], "-l", argv[3], "-a", "pci:00:00.0", NULL};
-    if (rte_eal_init(5, eal) < 0)
-        return 1;
+    if (rte_eal_init(5, eal) < 0) { free(groups); return 1; }
     struct doca_dev *devices[2] = {0};
     struct flow flows[2] = {0};
     uint16_t ports[2] = {UINT16_MAX, UINT16_MAX};
@@ -190,6 +199,8 @@ int main(int argc, char **argv)
         runners[i].port = ports[0];
         DOCA_CHECK(eth_tx_open(devices[1], i, 256, 2048,
                               &runners[i].worker, &runners[i].tx));
+        if (worker_set_groups(&runners[i].worker, groups) != 0)
+            goto cleanup;
     }
     DOCA_CHECK(flow_init());
     flow_initialized = true;
@@ -222,6 +233,20 @@ cleanup:
                s->rx_packets, s->tx_submitted, s->tx_completed, s->tx_errors,
                s->drop_full + s->drop_copy + s->drop_oversize + s->drop_submit + s->drop_stopping,
                runners[i].worker.pending);
+        printf("queue=%u malformed=%" PRIu64 " unsupported=%" PRIu64
+               " bad_icrc=%" PRIu64 " unknown_group=%" PRIu64 "\n", i,
+               s->drop_malformed, s->drop_unsupported, s->drop_icrc, s->drop_unknown_group);
+        if (groups) {
+            for (size_t g = 0; g < groups->count; ++g) {
+                const struct multicast_group *group = &groups->group[g];
+                for (size_t m = 0; m < group->member_count; ++m) {
+                    const struct worker_member_stats *ms = &runners[i].worker.members[group->first_member + m];
+                    printf("queue=%u group=%s member=%zu submitted=%" PRIu64
+                           " completed=%" PRIu64 " errors=%" PRIu64 " drops=%" PRIu64 "\n",
+                           i, group->id, m, ms->submitted, ms->completed, ms->errors, ms->drops);
+                }
+            }
+        }
     }
     if (flows[0].entry) {
         uint64_t packets, bytes;
@@ -260,5 +285,6 @@ cleanup:
             return 1;
     if (rte_eal_cleanup() < 0)
         return 1;
+    free(groups);
     return result;
 }

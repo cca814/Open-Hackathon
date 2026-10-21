@@ -50,9 +50,9 @@ Keep the following distinction explicit:
 ## 3. Technical stack
 
 - Hardware: NVIDIA BlueField-3 DPU with two 100 GbE ports.
-- SDK target: NVIDIA DOCA **3.2.1 LTS** where available. Check installed headers, library versions, device mode, and firmware before coding; never infer APIs from another DOCA release.
+- SDK target: NVIDIA DOCA **3.5.0098**, verified on the Arm runtime via read-only SSH (2026-10-21; Ubuntu 24.04.4 LTS). Check installed headers, library versions, device mode, and firmware before coding; never infer APIs from another DOCA release.
 - DOCA Flow API for steering/RSS.
-- DPDK + mlx5 PMD, EAL and eight RSS RX queues.
+- DPDK **26.03.0.5** (installed SDK metadata) + mlx5 PMD, EAL and eight RSS RX queues.
 - DOCA ETH TX queues and completion handling, owned by individual workers.
 - C, with Meson/Ninja build setup unless the existing repository specifies otherwise.
 - Eight Linux Arm workers, each polling one RX queue and servicing its own TX context. A single-worker mode is useful for debugging.
@@ -135,7 +135,7 @@ Do not confuse a successfully captured packet with an RDMA SEND completion or wi
 
 ### DOCA Flow and Destination QPN
 
-DOCA Flow 3.2.x documents actions for a set of parsed fields (including usual L2/L3/L4 fields), but this project has **not established a supported native action** for `RoCEv2 BTH Destination QPN`.
+DOCA Flow documents actions for a set of parsed fields (including usual L2/L3/L4 fields), but this project has **not established a supported native action** for `RoCEv2 BTH Destination QPN`.
 
 Do **not** write imaginary API members such as:
 
@@ -193,14 +193,15 @@ icrc/
 ├── meson.build
 ├── config/
 │   └── groups.example.json
+├── include/               # module headers: flow, worker, eth_tx, dpdk_rx, roce, icrc, groups
 ├── src/
 │   ├── main.c              # startup, eight workers, shutdown
-│   ├── flow.c / flow.h      # ingress match and RSS steering
-│   ├── worker.c / worker.h  # DPDK RX, replication, rewrite, ICRC, TX loop
-│   ├── eth_tx.c / eth_tx.h  # DOCA ETH TX buffers, submissions, completions
-│   ├── roce.c / roce.h      # bounds-checked parsing and header rewriting
-│   ├── icrc.c / icrc.h      # full ICRC calculation, independent of I/O APIs
-│   └── groups.c / groups.h  # file parsing, validation, immutable lookup table
+│   ├── flow.c      # ingress match and RSS steering
+│   ├── worker.c  # DPDK RX, replication, rewrite, ICRC, TX loop
+│   ├── eth_tx.c  # DOCA ETH TX buffers, submissions, completions
+│   ├── roce.c      # bounds-checked parsing and header rewriting
+│   ├── icrc.c      # full ICRC calculation, independent of I/O APIs
+│   └── groups.c  # file parsing, validation, immutable lookup table
 ├── tests/                  # parser, ICRC vectors and group-file tests
 └── tools/                  # target discovery and traffic/capture checks
 ```
@@ -243,8 +244,9 @@ Before implementing QPN rewriting, build the **DOCA Flow → eight DPDK workers 
 
 ## 11. Primary references to check against installed version
 
-- NVIDIA DOCA 3.2.1 Flow Programming Guide: https://docs.nvidia.com/doca/archive/3-2-1/doca-flow/index.html (verify current official URL/path if unavailable).
-- DPDK mlx5 PMD guide: https://doc.dpdk.org/guides-25.07/nics/mlx5.html
+- NVIDIA DOCA 3.5.0 API reference (release family for build 3.5.0098): https://docs.nvidia.com/doca/api/3-5-0/index.html. Check the installed build headers for exact signatures.
+- DOCA 3.5 compatibility changes: https://networking-docs.nvidia.com/doca/archive/3-5-0/customer-affecting-changes.
+- DPDK mlx5 PMD documentation matching the installed NVIDIA DPDK **26.03.0.5** build; do not assume the earlier 25.07 guide matches this target.
 - DPDK `rte_flow` FLEX and MODIFY_FIELD documentation matching the installed DPDK release.
 - InfiniBand Architecture Specification for BTH and invariant CRC rules; confirm precise RoCEv2 adaptations using verified implementations and on-wire test vectors.
 
