@@ -202,6 +202,15 @@ unchanged reverse path. Runtime QPNs are ephemeral and must be regenerated.
 
 **Done when:** A two-member group produces exactly two correctly addressed, independently checksum-verified wire packets per input under a no-loss test load. Unknown groups are counted and dropped; invalid configuration prevents startup; TX pressure is handled without shared-buffer corruption or leaks. Record receiver observations separately: packet fan-out alone does not demonstrate reliable multicast RC completion.
 
+**Status: COMPLETE (2026-10-27) for packet fan-out.** The independent IPv6
+wire oracle verified 64 inputs and 128 member outputs. The recorded sustained
+run sent 20,000 inputs across 64 flows and completed 40,000 replicas with zero
+TX errors, replication drops or pending buffers across all eight workers. A
+separate 256-packet unknown-QPN run was counted and dropped exactly; an
+out-of-range QPN configuration exited 2 before EAL/device startup. See
+`reports/milestone-3-experiment-2026-10-27.md`. This does not claim reliable
+multicast RC completion or line-rate capacity.
+
 ## 8. Proposed source layout and group control
 
 Keep modules small and aligned with the packet path; the same worker handles RX, processing and TX completions.
@@ -336,9 +345,10 @@ checkout is `/home/mtchang/Open-Hackathon/icrc`. On 2026-10-27:
 
 This validates startup, bidirectional physical forwarding, exact preservation,
 all eight RSS queues, two-member wire rewrite/ICRC correctness, receiver-QP
-acceptance, RC SEND completion, ACK return and cleanup. Milestone 2 is complete.
-The remaining milestone work is the recorded sustained-load behavior and
-throughput required by Milestone 3.
+acceptance, RC SEND completion, ACK return and cleanup. Milestones 2 and 3 are
+complete for their stated packet-processing scope. The Milestone 3 rate is a
+recorded Python-generator-limited workload, not a line-rate capacity claim;
+reliable multicast RC completion remains out of scope.
 
 ### IPv6 hardware path
 

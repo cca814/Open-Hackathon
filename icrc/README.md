@@ -224,6 +224,10 @@ errors or drops. This closes the capture/oracle part of Milestone 2 and the
 two-member no-loss wire-replication part of Milestone 3; it does not close the
 receiver-QP/RC-completion or recorded sustained-load gates.
 
+The recorded eight-worker Milestone 3 workload, rates, per-queue counters,
+unknown-group rejection, invalid-startup test and capture limitation are in
+[the 2026-10-27 experiment report](reports/milestone-3-experiment-2026-10-27.md).
+
 The IPv6 equivalent uses `--src-ip 2001:db8::10 --dst-ip 2001:db8::100` and
 members `2001:db8::1` and `2001:db8::2`, with
 `config/groups.ipv6.example.json`. On 2026-10-27, 64 controlled inputs produced
@@ -491,5 +495,7 @@ and full ICRC all agreed, while per-member submissions/completions were 64/64
 with zero errors or drops. The Node A OVS test additionally proved the sender
 SF-to-p0 route and exactly 64 outputs to each receiver SF representor. The live
 RC harness then proved QPN rewrite into an accepting ConnectX receiver and
-ACK-backed SEND completion. Milestone 2 is complete; sustained-load behavior
-and throughput remain open Milestone 3 gates.
+ACK-backed SEND completion. Milestone 2 is complete. The later recorded
+20,000-input workload completed 40,000 replicas with zero TX errors or drops,
+exercised all eight workers, and separately counted/dropped 256 unknown groups;
+see the Milestone 3 experiment report.

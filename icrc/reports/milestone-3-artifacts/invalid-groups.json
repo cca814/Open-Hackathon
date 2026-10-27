@@ -1,0 +1,11 @@
+{
+  "groups": [
+    {
+      "id": "invalid-qpn",
+      "match": {"dst_ipv6": "2001:db8::100", "dst_qpn": 16777216},
+      "members": [
+        {"dst_mac": "02:7e:6d:fd:79:7c", "dst_ipv6": "2001:db8::1", "dst_qpn": 101}
+      ]
+    }
+  ]
+}
