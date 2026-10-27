@@ -21,6 +21,7 @@ COPY src/ src/
 COPY tests/ tests/
 COPY tools/ tools/
 COPY config/groups.example.json config/groups.example.json
+COPY config/groups.ipv6.example.json config/groups.ipv6.example.json
 
 # The test suite is portable: no EAL, devices or traffic are accessed at build.
 # Keep the build tree at its original path to retain Meson's library RUNPATH.

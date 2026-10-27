@@ -9,11 +9,13 @@ worker_test = executable('test_worker', 'tests/test_worker.c',
 test('worker-ownership', worker_test)
 python = import('python').find_installation('python3')
 test('discovery', python, args: files('tests/test_discovery.py'))
+test('raw-udp4791-frame', python, args: files('tests/test_raw_udp4791.py'))
+test('roce-wire-oracle', python, args: files('tests/test_roce_wire.py'))
 
 summary('Hardware build enabled', get_option('hardware'))
 
-# DOCA 3.5 retains the existing global Flow counter API but marks it deprecated.
-# Acknowledge that compatibility API without disabling other compiler warnings.
+# Some included DOCA 3.5 headers still expose compatibility APIs as deprecated.
+# Acknowledge those declarations without disabling other compiler warnings.
 if get_option('hardware')
   doca_common = dependency('doca-common')
   doca_flow = dependency('doca-flow')

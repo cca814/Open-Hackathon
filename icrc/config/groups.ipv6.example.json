@@ -1,0 +1,12 @@
+{
+  "groups": [
+    {
+      "id": "demo-ipv6",
+      "match": {"dst_ipv6": "2001:db8::100", "dst_qpn": 9000},
+      "members": [
+        {"dst_mac": "02:00:00:00:00:01", "dst_ipv6": "2001:db8::1", "dst_qpn": 101},
+        {"dst_mac": "02:00:00:00:00:02", "dst_ipv6": "2001:db8::2", "dst_qpn": 102}
+      ]
+    }
+  ]
+}

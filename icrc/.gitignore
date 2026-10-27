@@ -3,3 +3,5 @@
 __pycache__/
 
 /.env
+config/groups.m2.runtime.json
+tools/rc_qpn_rewrite_test

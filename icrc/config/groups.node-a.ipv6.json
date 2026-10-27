@@ -1,0 +1,12 @@
+{
+  "groups": [
+    {
+      "id": "node-a-ipv6-sfs",
+      "match": {"dst_ipv6": "2001:db8::100", "dst_qpn": 9000},
+      "members": [
+        {"dst_mac": "02:7e:6d:fd:79:7c", "dst_ipv6": "2001:db8::1", "dst_qpn": 101},
+        {"dst_mac": "02:7e:6d:fd:79:01", "dst_ipv6": "2001:db8::2", "dst_qpn": 102}
+      ]
+    }
+  ]
+}

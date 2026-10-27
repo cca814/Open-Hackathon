@@ -96,7 +96,8 @@ static int fanout(struct worker *w, const struct worker_rx *rx)
         ++w->stats.drop_icrc;
         return 1;
     }
-    const struct multicast_group *group = groups_find(w->groups, packet.dst_ipv4, packet.dst_qpn);
+    const struct multicast_group *group = groups_find(w->groups, &packet.destination,
+                                                       packet.dst_qpn);
     if (!group) {
         ++w->stats.drop_unknown_group;
         return 1;

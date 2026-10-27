@@ -11,7 +11,11 @@ static unsigned next(void)
 }
 int main(void)
 {
-    struct roce_destination dst = {{2, 0, 0, 0, 0, 1}, 0xc0000201, 101};
+    struct roce_destination dst = {
+        .mac = {2, 0, 0, 0, 0, 1},
+        .address = {.family = ROCE_IPV4, .bytes = {192, 0, 2, 1}},
+        .qpn = 101,
+    };
     /* Exact allocation boundaries let ASan catch reads beyond truncated input. */
     for (size_t length = 0; length < 512; ++length) {
         uint8_t *frame = malloc(length ? length : 1);

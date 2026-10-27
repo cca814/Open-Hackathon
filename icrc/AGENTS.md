@@ -36,6 +36,9 @@ Node B — BlueField-3 (DOCA application on Arm)
   A.p1 (100 GbE)
       -> OVS ovsbr2 (hardware-offloaded eSwitch)
       -> RDMA receiver SF / ConnectX
+
+  RC ACK return: A.p1 -> B.p1 -> unchanged UDP/4791 reverse worker
+                         -> B.p0 -> A.p0 -> sender SF / ConnectX
 ```
 
 Node A establishes and manages the RDMA RC endpoints and QPs. Node B is a **packet processing network function**, not an RDMA endpoint and does not establish QPs. Node B should not rely on a DOCA RDMA API for this MVP.
@@ -50,13 +53,23 @@ Keep the following distinction explicit:
 ## 3. Technical stack
 
 - Hardware: NVIDIA BlueField-3 DPU with two 100 GbE ports.
-- SDK target: NVIDIA DOCA **3.5.0098**, verified on the Arm runtime via read-only SSH (2026-10-21; Ubuntu 24.04.4 LTS). Check installed headers, library versions, device mode, and firmware before coding; never infer APIs from another DOCA release.
+- SDK target: NVIDIA DOCA **3.5.0098**, verified on the Arm runtime (2026-10-26/27; Ubuntu 24.04.4 LTS). Native WSL SSH aliases `nvaitc-1` and `nvaitc-2` both reach their jump hosts, and `ssh DPU` from either jump host reaches its associated Arm DPU. Check installed headers, library versions, device mode, and firmware before coding; never infer APIs from another DOCA release.
 - DOCA Flow API for steering/RSS.
 - DPDK **26.03.0.5** (installed SDK metadata) + mlx5 PMD, EAL and eight RSS RX queues.
 - DOCA ETH TX queues and completion handling, owned by individual workers.
 - C, with Meson/Ninja build setup unless the existing repository specifies otherwise.
-- Eight Linux Arm workers, each polling one RX queue and servicing its own TX context. A single-worker mode is useful for debugging.
+- Eight Linux Arm lcores, each polling the same queue ID on both ports and
+  servicing one TX context per direction. Forward traffic may rewrite/fan out;
+  reverse UDP/4791 traffic is forwarded unchanged for ACK return.
 - libibverbs/perftest or an existing RC SEND test harness on Node A, separately from the Node B application.
+
+**Privilege policy:** Never use a privileged Docker container, host PID/mount
+namespace entry, or a similar container workaround to execute privileged host
+commands. Ask the user before every required `sudo`, root, privileged-container,
+or equivalent operation. Run `tools/configure_node_a_ovs.sh` directly under an
+explicitly approved `sudo`; its `recover` action removes only cookie
+`0x49435243` flows. Starting the Node B Compose service is itself privileged and
+also requires explicit approval.
 
 **Startup invariant:** Verify compatible DOCA Flow, DPDK RX and DOCA ETH TX device ownership against installed SDK samples on the actual BlueField. Define the mbuf-to-TX-buffer handoff explicitly; start with a copy into DOCA-compatible TX memory if needed, rather than assuming zero-copy interoperability. This development machine is not the runtime target.
 
@@ -173,6 +186,13 @@ Confirm `p0`/`p1`, mlx5 port indices, DPDK port IDs, SF/VF/representor ownership
 
 **Done when:** Captures show only the intended rewrite and new ICRC; independent verification agrees. A correctly configured single receiver accepts the packet and the RC SEND completes with a documented ACK return path. QP setup remains Node A's responsibility.
 
+**Status: COMPLETE (2026-10-27).** Independent IPv4 and IPv6 wire oracles agree,
+and `tools/rc_qpn_rewrite_test.c` proved transport acceptance with live
+ConnectX RC QPs. The sender targeted virtual QPN `1006`; Node B rewrote it to
+receiver QPN `1005`. The receiver CQE reported success with the expected
+40-byte payload, and the sender CQE completed only after the ACK traversed the
+unchanged reverse path. Runtime QPNs are ephemeral and must be regenerated.
+
 ### Milestone 3 — File-configured groups and fan-out
 
 - Load a group file at startup, mapping an incoming destination IPv4/QPN pair to a list of destination members.
@@ -241,6 +261,94 @@ These are illustrative addresses and QPNs; use the receiver QPs actually created
 ## 10. Recommended first task
 
 Before implementing QPN rewriting, build the **DOCA Flow → eight DPDK workers → DOCA ETH TX baseline** that receives actual RoCEv2 UDP/4791 frames on B.p0 and sends them unchanged through B.p1. Record the verified SDK initialization, RX-to-TX buffer handoff, port mapping, build/run commands and RX/TX completion counters. If steering fails, investigate NIC RDMA consumption, representor mapping, and isolated-switch configuration before adding more features.
+
+### Runtime SSH paths
+
+From WSL, use the native SSH client and the configured aliases. Both paths were
+verified non-interactively on 2026-10-26:
+
+```sh
+ssh nvaitc-1
+ssh DPU
+```
+
+```sh
+ssh nvaitc-2
+ssh DPU
+```
+
+`nvaitc-1` resolves to jump host `NVAITC-TPWS-1`, while `nvaitc-2` resolves to
+`NVAITC-TPWS-2`. Each jump host's `DPU` alias reaches a distinct `aarch64` DPU
+running DOCA `3.5.0098`. Prefer these native WSL aliases over invoking the
+Windows OpenSSH executable. Authentication remains in the user's SSH
+configuration; do not copy credentials or private key material into this
+repository.
+
+### Verified Node B runtime
+
+Node B is the DPU reached through `ssh nvaitc-2`, then `ssh DPU`. Its validated
+checkout is `/home/mtchang/Open-Hackathon/icrc`. On 2026-10-27:
+
+- `03:00.0` (RX) and `03:00.1` (TX) mapped to DPDK ports 2 and 3.
+- `/dev/hugepages` was mounted as hugetlbfs with eight free 512 MiB pages before
+  launch. Use `HUGEPAGES_DIR=/dev/hugepages`; the container target remains
+  `/mnt/huge`.
+- The DOCA image build completed and all six Meson tests passed.
+- A bounded no-group launch initialized eight RX queues and eight DOCA ETH TX
+  contexts per port, one UDP/4791 RSS Flow pipe/counter per port, then reached
+  `Eight bidirectional workers running` and shut down cleanly.
+- DPDK 26.03 on BF3 requires mlx5 probe argument `txq_mem_algn=0` to use its
+  legacy per-queue allocation path. DOCA Flow 3.5 requires port-scoped RSS and
+  counter reservations. In this HWS path, fix IPv4/UDP using parser metadata;
+  do not redundantly set `outer.l3_type` or `outer.l4_type_ext`, which causes
+  pipe construction to fail with a protocol-only opcode error.
+- `tools/raw_udp4791.py` provides an icrc-local physical-path diagnostic. Three
+  individually logged frames were captured byte-for-byte from Node A p0 through
+  Node B to Node A p1. A 256-frame/64-flow run captured all 256 and assigned 32
+  controlled packets to each of the eight RX queues, with matching TX
+  submissions/completions and no errors, drops or pending buffers. Use outer
+  IPv4/UDP RSS flags for this non-tunneled traffic; inner flags forwarded all
+  controlled flows to queue 0.
+- The reverse physical path was validated separately: 256 tagged packets sent
+  on Node A p1 were all captured on Node A p0 after Node B, with exactly 32
+  controlled packets on each reverse queue and no TX errors, drops or pending
+  buffers. This is the implemented RC ACK route.
+- `tools/roce_wire.py` is an independent Python RC SEND/checksum oracle. A
+  64-input run using the two-member example group captured exactly 128 outputs.
+  Every complete frame matched the expected destination MAC/IP/QPN rewrite,
+  IPv4 checksum, UDP checksum and full ICRC. Aggregate per-member counters were
+  64 submitted/64 completed with zero errors or drops.
+- The same oracle passed with IPv6: 64 inputs produced 128/128 exact member
+  outputs, all eight queues handled eight controlled inputs, and each member
+  completed 64/64 with valid mandatory UDP checksum and full IPv6 ICRC.
+- Node A has hardware-offloaded `ovsbr1` joining sender SF representor
+  `en3f0pf0sf0` to `p0`, and `ovsbr2` joining `p1` to the receiver SF
+  representors. `tools/configure_node_a_ovs.sh setup` installs auditable L2
+  routes under cookie `0x49435243`, including the reverse ACK path; `recover`
+  removes only those project-owned flows. A controlled run counted exactly 64
+  outputs to each receiver representor while Node B completed all 128 sends.
+- A live single-receiver RC test used `mlx5_2` as sender and `mlx5_3` as
+  receiver. The harness kept a distinct dummy QP alive as virtual QPN `1006`
+  while receiver QPN `1005` was in RTR/RTS. Node B matched and rewrote the
+  virtual QPN, completed one forward TX, and forwarded the ACK in reverse with
+  zero TX errors or drops. Both receiver and sender CQEs succeeded and the
+  received 40-byte payload matched exactly.
+
+This validates startup, bidirectional physical forwarding, exact preservation,
+all eight RSS queues, two-member wire rewrite/ICRC correctness, receiver-QP
+acceptance, RC SEND completion, ACK return and cleanup. Milestone 2 is complete.
+The remaining milestone work is the recorded sustained-load behavior and
+throughput required by Milestone 3.
+
+### IPv6 hardware path
+
+Restricted IPv6 without extension headers or jumbograms is enabled through the
+packet middlebox. One root control pipe classifies
+`parser_meta.outer_l3_type` and forwards to non-root IPv4 and IPv6 UDP/4791 RSS
+pipes; this satisfies DOCA Flow's one-root-per-port constraint. Constructor,
+counter, controlled capture, two-member rewrite, mandatory UDP checksum and
+full ICRC tests pass on DOCA 3.5.0098. The live RC QP test also passed over this
+IPv6 path, including receiver acceptance and ACK-backed sender completion.
 
 ## 11. Primary references to check against installed version
 

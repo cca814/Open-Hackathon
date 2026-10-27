@@ -43,12 +43,19 @@ static int number(struct parser *p, uint32_t *value)
     *value = n;
     return 0;
 }
-static int ipv4(struct parser *p, uint32_t *value)
+static int address(struct parser *p, int family, struct roce_address *value)
 {
-    char text[16]; struct in_addr address;
-    if (string(p, text, sizeof(text)) || inet_pton(AF_INET, text, &address) != 1) return -1;
-    *value = ntohl(address.s_addr);
+    char text[INET6_ADDRSTRLEN];
+    if (string(p, text, sizeof(text)) ||
+        inet_pton(family == ROCE_IPV4 ? AF_INET : AF_INET6, text, value->bytes) != 1)
+        return -1;
+    value->family = (uint8_t)family;
     return 0;
+}
+static int address_equal(const struct roce_address *a, const struct roce_address *b)
+{
+    size_t length = a->family == ROCE_IPV4 ? 4 : 16;
+    return a->family == b->family && !memcmp(a->bytes, b->bytes, length);
 }
 static int hex(char c)
 {
@@ -75,7 +82,8 @@ static int endpoint(struct parser *p, struct roce_destination *dst, int member)
     for (;;) {
         char key[32]; unsigned bit;
         if (string(p, key, sizeof(key)) || take(p, ':')) return -1;
-        if (!strcmp(key, "dst_ipv4")) { bit = 1; if (ipv4(p, &dst->ipv4)) return -1; }
+        if (!strcmp(key, "dst_ipv4")) { bit = 1; if (address(p, ROCE_IPV4, &dst->address)) return -1; }
+        else if (!strcmp(key, "dst_ipv6")) { bit = 1; if (address(p, ROCE_IPV6, &dst->address)) return -1; }
         else if (!strcmp(key, "dst_qpn")) { bit = 2; if (number(p, &dst->qpn)) return -1; }
         else if (member && !strcmp(key, "dst_mac")) { bit = 4; if (mac(p, dst->mac)) return -1; }
         else return -1;
@@ -97,7 +105,8 @@ static int members(struct parser *p, struct groups *table, struct multicast_grou
         if (endpoint(p, &dst, 1)) return -1;
         for (size_t i = group->first_member; i < table->member_count; ++i) {
             const struct roce_destination *other = &table->member[i];
-            if (other->ipv4 == dst.ipv4 && other->qpn == dst.qpn && !memcmp(other->mac, dst.mac, 6)) return -1;
+            if (address_equal(&other->address, &dst.address) && other->qpn == dst.qpn &&
+                !memcmp(other->mac, dst.mac, 6)) return -1;
         }
         table->member[table->member_count++] = dst;
         ++group->member_count;
@@ -120,7 +129,7 @@ static int group(struct parser *p, struct groups *table)
         } else if (!strcmp(key, "match")) {
             bit = 2; struct roce_destination match = {0};
             if (endpoint(p, &match, 0)) return -1;
-            g->dst_ipv4 = match.ipv4; g->dst_qpn = match.qpn;
+            g->destination = match.address; g->dst_qpn = match.qpn;
         } else if (!strcmp(key, "members")) {
             bit = 4; if (seen & bit || members(p, table, g)) return -1;
         } else return -1;
@@ -131,9 +140,13 @@ static int group(struct parser *p, struct groups *table)
         if (take(p, ',')) return -1;
     }
     if (seen != 7) return -1;
+    for (size_t i = g->first_member; i < g->first_member + g->member_count; ++i)
+        if (table->member[i].address.family != g->destination.family)
+            return -1;
     for (size_t i = 0; i < table->count; ++i)
         if (!strcmp(g->id, table->group[i].id) ||
-            (g->dst_ipv4 == table->group[i].dst_ipv4 && g->dst_qpn == table->group[i].dst_qpn)) return -1;
+            (address_equal(&g->destination, &table->group[i].destination) &&
+             g->dst_qpn == table->group[i].dst_qpn)) return -1;
     ++table->count;
     return 0;
 }
@@ -184,11 +197,14 @@ done:
     return status;
 }
 
-const struct multicast_group *groups_find(const struct groups *table, uint32_t ip, uint32_t qpn)
+const struct multicast_group *groups_find(const struct groups *table,
+                                          const struct roce_address *address,
+                                          uint32_t qpn)
 {
-    if (table)
+    if (table && address)
         for (size_t i = 0; i < table->count; ++i)
-            if (table->group[i].dst_ipv4 == ip && table->group[i].dst_qpn == qpn)
+            if (address_equal(&table->group[i].destination, address) &&
+                table->group[i].dst_qpn == qpn)
                 return &table->group[i];
     return NULL;
 }

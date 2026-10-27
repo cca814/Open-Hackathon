@@ -19,7 +19,7 @@ services:
         hard: -1
     volumes:
       - type: bind
-        source: ${HUGEPAGES_DIR:-/mnt/huge}
+        source: ${HUGEPAGES_DIR:-/dev/hugepages}
         target: /mnt/huge
         bind:
           create_host_path: false
@@ -35,8 +35,10 @@ services:
         bind:
           create_host_path: false
     command:
-      - "${RX_PCI:?Set RX_PCI to the verified ingress PCI BDF}"
-      - "${TX_PCI:?Set TX_PCI to the verified egress PCI BDF}"
+      # Legacy variable names: forward is RX_PCI -> TX_PCI; reverse uses the
+      # same devices in the opposite direction for unchanged UDP/4791 ACKs.
+      - "${RX_PCI:?Set RX_PCI to the verified forward-ingress/port0 PCI BDF}"
+      - "${TX_PCI:?Set TX_PCI to the verified forward-egress/port1 PCI BDF}"
       - "${LCORES:?Set LCORES to nine available DPU CPU cores}"
       - --groups
       - /etc/node-b/groups.json

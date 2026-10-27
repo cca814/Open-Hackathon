@@ -7,4 +7,5 @@ build*
 .env.*
 config/*.json
 !config/groups.example.json
+!config/groups.ipv6.example.json
 node-b-inventory*.json
