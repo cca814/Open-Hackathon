@@ -42,6 +42,7 @@ sink A/B/C (QP1..3) ◀──── Port 2 ◀═══════ Port 4 ◀�
 | WS#1 DPU ARM | `DPU1` | 192.168.100.2,ProxyJump `DPU-host1` | aarch64,16 core,**source 與 3 個 sink 跑這裡** |
 | WS#2 DPU ARM | `DPU2` | 192.168.100.2,ProxyJump `DPU-host2` | **relay 跑這裡** |
 
+- 兩台 DPU 是**共用的**:其他組員也會登入,DPU 也可能被重開機(DPU1 在 2026-10-26 16:07 重開過)。重開機後 IP 和額外的 SF 會消失,OVS 的 port 會留著。動手改設定前先 `who` 看有沒有人在用。
 - 使用者都是 `a2-07`。四台都有 gcc / make,`/dev/infiniband/uverbs*` 是 0666,跑 verbs 程式不需要 root。
 - **sudo**:DPU1 / DPU2 免密碼。兩台 host 上 `a2-07` **不在 sudoers**(sudo 群組只有其他管理員帳號),要請 host 管理員處理。
 - `DPU1` 與 `DPU2` 的 HostName 都是 192.168.100.2,所以 `~/.ssh/config` 的兩個 Host 區塊各有 `HostKeyAlias DPU1` / `HostKeyAlias DPU2`,直接 `ssh DPU1` / `ssh DPU2` 即可。不要用 `ssh-keygen -R` 或 `StrictHostKeyChecking=no` 硬過。兩台 DPU 的 `hostname` 都是 `localhost.localdomain`,要分辨是哪一台,看 `p0` 的 MAC(DPU1 `9c:63:c0:50:96:64`、DPU2 `9c:63:c0:50:85:c4`)。
@@ -105,12 +106,15 @@ sink A/B/C (QP1..3) ◀──── Port 2 ◀═══════ Port 4 ◀�
 rdma/bench.sh                          # 預設:64B 到 64KB 六種大小,各 3 次,pool 64、window 16
 rdma/bench.sh -r 1 1024:20000          # SIZE[:COUNT],跑 1 次 20000 則 1KB
 rdma/bench.sh --no-verify 16384:100000 # sink 不加 --verify
+rdma/bench.sh -o results.txt           # 另外把每行加上時間戳附加存到檔案(不會覆蓋,warm-up 不記)
 rdma/bench.sh -d baseline_fast 1024:300000   # 用 DPU 上另一份程式副本(家目錄下的資料夾名)
 ```
 
-開頭會先跑一次 warm-up(讓 OVS 把流程 offload),結束時不論成敗都會收掉 sink / relay / source。
+開頭會先跑一次 warm-up(讓 OVS 把流程 offload),結束時不論成敗都會收掉 sink / relay / source。每行會印出用的資料夾(`dir=`),所以不同程式副本的結果可以放在同一個檔案裡比。**正式掃描請加 `-o` 存檔。**
 
-## 量測結果(2026-10-21)
+## 量測結果(2026-10-25)
+
+原始資料:[docs/results/2026-10-25-sweep.txt](docs/results/2026-10-25-sweep.txt)(主掃描的 18 行,未修改),格式與來源見 [docs/results/README.md](docs/results/README.md)。下面其他實驗(拿掉 `--verify`、pool / window 組合、改過的程式副本、`ib_send_bw`、RNR 計數器)的數字是從終端機輸出讀來的,**沒有存成檔案**,可信度比主掃描低。
 
 配置如上(source 與 sinks 在 DPU1 ARM,relay 在 DPU2 ARM,單向兩段 100G 鏈路),`--pool 64 --window 16`,每個 sink 都 `0 corrupted, 0 out of order`。「in」是 relay 收到的速率,「out」是 relay 對 3 個 target 送出的總和(= 3 × in)。
 

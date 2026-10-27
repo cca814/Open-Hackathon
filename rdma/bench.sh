@@ -8,6 +8,7 @@
 #   ./bench.sh                         default sweep, 3 runs per size
 #   ./bench.sh -r 1 1024:20000         one run of 20000 x 1 KB messages
 #   ./bench.sh --no-verify 16384:100000
+#   ./bench.sh -o results.txt          also append each line, with a timestamp, to a file
 #
 # Each argument is SIZE[:COUNT]. One line is printed per run.
 set -uo pipefail
@@ -20,6 +21,7 @@ pool=64           # pool == window makes the sender wait on RNR retries, so keep
 window=16
 verify=--verify
 warmup=1
+out=              # file to append the result lines to; empty means screen only
 
 # Devices and IPs set up by dpu-net.sh. Each RDMA process needs its own SF.
 SRC_DEV=mlx5_2          SRC_IP_TO_RELAY=10.0.1.2
@@ -32,16 +34,18 @@ GID=1
 DEFAULT_SIZES="64:500000 256:500000 1024:300000 4096:200000 16384:100000 65536:30000"
 
 usage() {
-    echo "usage: $0 [-r REPS] [-p POOL] [-w WINDOW] [-d DIR] [--no-verify] [--no-warmup] [SIZE[:COUNT]...]" >&2
+    echo "usage: $0 [-r REPS] [-p POOL] [-w WINDOW] [-d DIR] [-o FILE] [--no-verify] [--no-warmup] [SIZE[:COUNT]...]" >&2
     exit 2
 }
 
 while [ $# -gt 0 ]; do
+    case $1 in -r|-p|-w|-d|-o) [ $# -ge 2 ] || usage ;; esac
     case $1 in
         -r) reps=$2; shift 2 ;;
         -p) pool=$2; shift 2 ;;
         -w) window=$2; shift 2 ;;
         -d) dir=$2; shift 2 ;;
+        -o) out=$2; shift 2 ;;
         --no-verify) verify=; shift ;;
         --no-warmup) warmup=0; shift ;;
         -h|--help) usage ;;
@@ -94,7 +98,7 @@ run_once() {
     local mps=NA
     [ -n "$s_time" ] && mps=$(awk -v c="$count" -v t="$s_time" 'BEGIN { printf "%.3f", c / t / 1e6 }')
 
-    echo "size=$size count=$count pool=$pool window=$window | source ${s_gbps:-NA} Gbps, $mps Mmsg/s, ${s_time:-NA} s | relay in ${r_in:-NA} out ${r_out:-NA} Gbps | sinks ${rates:-NA} Gbps | verify ${ok}"
+    echo "size=$size count=$count pool=$pool window=$window dir=$dir | source ${s_gbps:-NA} Gbps, $mps Mmsg/s, ${s_time:-NA} s | relay in ${r_in:-NA} out ${r_out:-NA} Gbps | sinks ${rates:-NA} Gbps | verify ${ok}"
 }
 
 if [ "$warmup" = 1 ]; then
@@ -107,6 +111,9 @@ for spec in $sizes; do
     count=${spec#*:}
     [ "$count" = "$spec" ] && count=100000
     for ((rep = 1; rep <= reps; rep++)); do
-        run_once "$size" "$count"
+        line=$(run_once "$size" "$count")
+        echo "$line"
+        # The warm-up above is not logged, only the measured runs.
+        [ -z "$out" ] || echo "$(date -Iseconds) | $line" >> "$out"
     done
 done
