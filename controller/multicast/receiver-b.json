@@ -1,0 +1,6 @@
+{
+  "qpn": 201, "gid": "::ffff:10.0.0.2",
+  "remote_qpn": 9102, "remote_gid": "::ffff:10.0.0.102",
+  "sq_psn": 9000, "rq_psn": 3000, "switch_port": 2,
+  "local_mac": "02:00:00:00:00:02", "remote_mac": "02:00:00:00:01:02"
+}

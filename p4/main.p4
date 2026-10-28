@@ -3,6 +3,7 @@
 
 #include "parser.p4"
 #include "ingress.p4"
+#include "egress.p4"
 
 control MyVerifyChecksum(inout headers_t headers, inout metadata_t metadata) {
     apply {
@@ -16,12 +17,6 @@ control MyVerifyChecksum(inout headers_t headers, inout metadata_t metadata) {
               headers.ipv4.src_addr, headers.ipv4.dst_addr },
             headers.ipv4.hdr_checksum, HashAlgorithm.csum16);
     }
-}
-
-control MyEgress(inout headers_t headers,
-                 inout metadata_t metadata,
-                 inout standard_metadata_t standard_metadata) {
-    apply { }
 }
 
 control MyComputeChecksum(inout headers_t headers, inout metadata_t metadata) {

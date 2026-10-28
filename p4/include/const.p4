@@ -13,4 +13,8 @@ const bit<8> BTH_OP_RC_ACK = 0x11;
 
 const bit<32> CONNECTION_TABLE_SIZE = 4096;
 
+// One fixed, single-sender multicast group; member IDs are 0..31.
+const bit<16> MULTICAST_GROUP = 1;
+const bit<6> MAX_MULTICAST_MEMBERS = 32;
+
 #endif

@@ -54,9 +54,10 @@ static void print_usage(FILE *out, const char *program, int is_server) {
     fprintf(out, "[--config-file <file> [--info-file <json>]]\n"
                  "Without --config-file, listen for TCP exchange on port 10001.\n");
   } else {
-    fprintf(out, "(--server-ip <host> | --config-file <file>) [--info-file <json>]\n"
+    fprintf(out, "(--server-ip <host> | --config-file <file>) [--rid <rid>] [--info-file <json>]\n"
                  "--server-ip: exchange QPN/GID over TCP, using PSN 1.\n"
-                 "--config-file: use the preconfigured P4 virtual endpoint.\n");
+                 "--config-file: use the preconfigured P4 virtual endpoint.\n"
+                 "--rid: multicast receiver ID; the info file defaults to receiver-<rid>.json.\n");
   }
   fprintf(out, "--info-file applies only to --config-file (default: %s-connection.json).\n",
           is_server ? "server" : "client");
@@ -69,11 +70,12 @@ int parse_rdma_options(int argc, char **argv, int is_server, RdmaOptions *option
       {"server-ip", required_argument, NULL, 's'},
       {"config-file", required_argument, NULL, 'c'},
       {"info-file", required_argument, NULL, 'o'},
+      {"rid", required_argument, NULL, 'r'},
       {"help", no_argument, NULL, 'h'},
       {NULL, 0, NULL, 0}};
   *options = (RdmaOptions){.gid_index = -1};
-  int flag;
-  while ((flag = getopt_long(argc, argv, "d:g:s:c:o:h", flags, NULL)) != -1) {
+  int flag, rid = -1;
+  while ((flag = getopt_long(argc, argv, "d:g:s:c:o:r:h", flags, NULL)) != -1) {
     uint32_t index;
     if (optarg != NULL && *optarg == '\0') {
       fprintf(stderr, "Option values must not be empty\n");
@@ -91,6 +93,14 @@ int parse_rdma_options(int argc, char **argv, int is_server, RdmaOptions *option
     case 's': options->server_ip = optarg; break;
     case 'c': options->config_file = optarg; break;
     case 'o': options->info_file = optarg; break;
+    case 'r':
+      // standard_metadata.egress_rid is bit<16>.
+      if (parse_number(optarg, UINT16_MAX, &index) != 0) {
+        fprintf(stderr, "--rid must be between 0 and 65535\n");
+        return -1;
+      }
+      rid = (int)index;
+      break;
     case 'h': print_usage(stdout, argv[0], is_server); return 1;
     default: print_usage(stderr, argv[0], is_server); return -1;
     }
@@ -103,6 +113,10 @@ int parse_rdma_options(int argc, char **argv, int is_server, RdmaOptions *option
     fprintf(stderr, "--server-ip is only valid for the client\n");
     return -1;
   }
+  if (is_server && rid >= 0) {
+    fprintf(stderr, "--rid is only valid for the client\n");
+    return -1;
+  }
   if (!is_server && ((options->server_ip == NULL) == (options->config_file == NULL))) {
     fprintf(stderr, "Choose exactly one of --server-ip and --config-file\n");
     return -1;
@@ -111,8 +125,19 @@ int parse_rdma_options(int argc, char **argv, int is_server, RdmaOptions *option
     fprintf(stderr, "--info-file requires --config-file\n");
     return -1;
   }
+  if (options->config_file == NULL && rid >= 0) {
+    fprintf(stderr, "--rid requires --config-file\n");
+    return -1;
+  }
   if (options->config_file != NULL && options->info_file == NULL) {
-    options->info_file = is_server ? "server-connection.json" : "client-connection.json";
+    if (rid >= 0) {
+      // The name generate-multicast-group-config.py expects in group<gid>/.
+      static char rid_info_file[sizeof("receiver-65535.json")];
+      snprintf(rid_info_file, sizeof(rid_info_file), "receiver-%d.json", rid);
+      options->info_file = rid_info_file;
+    } else {
+      options->info_file = is_server ? "server-connection.json" : "client-connection.json";
+    }
   }
   return 0;
 }

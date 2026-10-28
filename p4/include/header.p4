@@ -84,6 +84,7 @@ struct headers_t {
 struct metadata_t {
     bit<1> connection_matched;
     bit<1> icrc_dirty;
+    bit<16> multicast_group;
 }
 
 #endif

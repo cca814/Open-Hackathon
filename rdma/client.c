@@ -156,42 +156,33 @@ int main(int argc, char **argv) {
   }
 
   printf("QP ready: local QPN %u, remote QPN %u\n", local.qpn, remote.qpn);
+
+  // Prepare receive buffer.
+  struct ibv_sge sge = {
+      .addr = (uintptr_t)buffer, .length = 4096, .lkey = node.mr->lkey};
+
+  struct ibv_recv_wr recv_wr = {.wr_id = 1, .sg_list = &sge, .num_sge = 1};
+
+  struct ibv_recv_wr *bad_wr = NULL;
+
+  // Post RECV wr
+  int ret = ibv_post_recv(node.qp, &recv_wr, &bad_wr);
+  if (ret != 0) {
+    fprintf(stderr, "ibv_post_recv failed: %s\n", strerror(ret));
+    return 1;
+  }
+  // Publish only after the receive buffer is posted, so the server can send.
   if (options.config_file != NULL) {
     if (write_connection_info(options.info_file, &local, &config) != 0) {
       return 1;
     }
-    printf("Install the P4 rules using both info files, then press Enter to send.\n");
-    fflush(stdout);
-    if (getchar() != '\n') {
-      fprintf(stderr, "Send cancelled: expected Enter after P4 rules are installed\n");
-      return 1;
-    }
   }
-
-  // Prepare send buffer.
-  strcpy(buffer, "Hello RDMA!");
-
-  struct ibv_sge sge = {.addr = (uintptr_t)buffer,
-                        .length = strlen(buffer) + 1,
-                        .lkey = node.mr->lkey};
-
-  struct ibv_send_wr send_wr = {.wr_id = 2,
-                                .sg_list = &sge,
-                                .num_sge = 1,
-                                .opcode = IBV_WR_SEND,
-                                .send_flags = IBV_SEND_SIGNALED};
-
-  struct ibv_send_wr *bad_wr = NULL;
-
-  int ret = ibv_post_send(node.qp, &send_wr, &bad_wr);
-  if (ret != 0) {
-    fprintf(stderr, "ibv_post_send failed: %s\n", strerror(ret));
-    return 1;
-  }
+  printf("Receive buffer ready; waiting for the server.\n");
+  fflush(stdout);
 
   poll_complete(node.cq);
 
-  printf("SEND completed!\n");
+  printf("Received data: %.4096s\n", buffer);
 
   return 0;
 }

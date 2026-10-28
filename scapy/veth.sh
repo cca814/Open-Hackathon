@@ -7,6 +7,7 @@ set -euo pipefail
 PAIRS=(
     "sw-p1 node-a"   # BMv2 port 1, client
     "sw-p2 node-b"   # BMv2 port 2, server
+    "sw-p3 node-c"   # BMv2 port 3, optional multicast receiver
     "sw-cpu ctl-cpu" # BMv2 port 510, controller
 )
 
@@ -20,7 +21,7 @@ up() {
             ip link set dev "$dev" up
         done
     done
-    echo "ready: simple_switch -i 1@sw-p1 -i 2@sw-p2 -i 510@sw-cpu build/main.json"
+    echo "ready: simple_switch -i 1@sw-p1 -i 2@sw-p2 -i 3@sw-p3 -i 510@sw-cpu build/main.json"
 }
 
 down() {
