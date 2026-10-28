@@ -9,6 +9,7 @@
 #   ./bench.sh -r 1 1024:20000         one run of 20000 x 1 KB messages
 #   ./bench.sh --no-verify 16384:100000
 #   ./bench.sh -o results.txt          also append each line, with a timestamp, to a file
+#   ./bench.sh --latency -w 1 -r 1 1024:20000   add each sink's p50 and p99 delay (window 1: no queueing)
 #
 # Each argument is SIZE[:COUNT]. One line is printed per run.
 set -uo pipefail
@@ -20,6 +21,7 @@ reps=3
 pool=64           # pool == window makes the sender wait on RNR retries, so keep it larger
 window=16
 verify=--verify
+lat=              # --latency adds sink --latency and the p50 / p99 columns
 warmup=1
 out=              # file to append the result lines to; empty means screen only
 
@@ -34,7 +36,7 @@ GID=1
 DEFAULT_SIZES="64:500000 256:500000 1024:300000 4096:200000 16384:100000 65536:30000"
 
 usage() {
-    echo "usage: $0 [-r REPS] [-p POOL] [-w WINDOW] [-d DIR] [-o FILE] [--no-verify] [--no-warmup] [SIZE[:COUNT]...]" >&2
+    echo "usage: $0 [-r REPS] [-p POOL] [-w WINDOW] [-d DIR] [-o FILE] [--no-verify] [--latency] [--no-warmup] [SIZE[:COUNT]...]" >&2
     exit 2
 }
 
@@ -47,6 +49,7 @@ while [ $# -gt 0 ]; do
         -d) dir=$2; shift 2 ;;
         -o) out=$2; shift 2 ;;
         --no-verify) verify=; shift ;;
+        --latency) lat=--latency; shift ;;
         --no-warmup) warmup=0; shift ;;
         -h|--help) usage ;;
         -*) usage ;;
@@ -74,7 +77,7 @@ run_once() {
     local sinks="cd ~/$dir/rdma; rm -f sink*.log;"
     local targets=""
     for i in 0 1 2; do
-        sinks+=" nohup ./sink --device ${SINK_DEVS[$i]} --gid-index $GID --port ${SINK_PORTS[$i]} --count $count $verify --msg-size $msg --pool $pool > sink${SINK_PORTS[$i]}.log 2>&1 < /dev/null &"
+        sinks+=" nohup ./sink --device ${SINK_DEVS[$i]} --gid-index $GID --port ${SINK_PORTS[$i]} --count $count $verify $lat --msg-size $msg --pool $pool > sink${SINK_PORTS[$i]}.log 2>&1 < /dev/null &"
         targets+=" --target ${SINK_IPS[$i]}:${SINK_PORTS[$i]}"
     done
     remote $SRC_HOST "$sinks sleep 1"
@@ -98,7 +101,15 @@ run_once() {
     local mps=NA
     [ -n "$s_time" ] && mps=$(awk -v c="$count" -v t="$s_time" 'BEGIN { printf "%.3f", c / t / 1e6 }')
 
-    echo "size=$size count=$count pool=$pool window=$window dir=$dir | source ${s_gbps:-NA} Gbps, $mps Mmsg/s, ${s_time:-NA} s | relay in ${r_in:-NA} out ${r_out:-NA} Gbps | sinks ${rates:-NA} Gbps | verify ${ok}"
+    local latency=""
+    if [ -n "$lat" ]; then
+        local p50 p99
+        p50=$(sed -n 's/^Latency: .* p50=\([0-9.]*\) .*/\1/p' <<< "$snk" | paste -sd, -)
+        p99=$(sed -n 's/^Latency: .* p99=\([0-9.]*\) .*/\1/p' <<< "$snk" | paste -sd, -)
+        latency=" | latency p50 ${p50:-NA} p99 ${p99:-NA} us"
+    fi
+
+    echo "size=$size count=$count pool=$pool window=$window dir=$dir | source ${s_gbps:-NA} Gbps, $mps Mmsg/s, ${s_time:-NA} s | relay in ${r_in:-NA} out ${r_out:-NA} Gbps | sinks ${rates:-NA} Gbps | verify ${ok}${latency}"
 }
 
 if [ "$warmup" = 1 ]; then

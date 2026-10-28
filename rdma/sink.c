@@ -23,6 +23,8 @@ typedef struct sink_options {
   unsigned long pool, msg_size, count;
   enum ibv_mtu mtu;
   int verify;
+  int latency;
+  unsigned long latency_skip;
 } SinkOptions;
 
 static volatile sig_atomic_t stop_requested;
@@ -47,7 +49,10 @@ static void print_usage(FILE *out, const char *program) {
           "  --pool       receive buffers (default 16)\n"
           "  --msg-size   bytes per buffer, the largest message (default 4096)\n"
           "  --mtu        path MTU: 256..4096 (default 1024)\n"
-          "  --verify     check messages made by source: intact and in sequence\n",
+          "  --verify     check messages made by source: intact and in sequence\n"
+          "  --latency    time each message from the source's post to this receive;\n"
+          "               source and sink must run on one machine (one clock)\n"
+          "  --latency-skip  leave the first N messages out of the latency figures (default 0)\n",
           program, DEFAULT_PORT);
 }
 
@@ -62,6 +67,8 @@ static int parse_options(int argc, char **argv, SinkOptions *options) {
       {"msg-size", required_argument, NULL, 's'},
       {"mtu", required_argument, NULL, 'm'},
       {"verify", no_argument, NULL, 'v'},
+      {"latency", no_argument, NULL, 'L'},
+      {"latency-skip", required_argument, NULL, 'k'},
       {"help", no_argument, NULL, 'h'},
       {NULL, 0, NULL, 0}};
   *options = (SinkOptions){.ib_port = 1,
@@ -100,6 +107,8 @@ static int parse_options(int argc, char **argv, SinkOptions *options) {
       break;
     case 'm': ok = parse_mtu(optarg, &options->mtu) == 0; break;
     case 'v': options->verify = 1; break;
+    case 'L': options->latency = 1; break;
+    case 'k': ok = parse_uint(optarg, ULONG_MAX, &options->latency_skip) == 0; break;
     case 'h': print_usage(stdout, argv[0]); return 1;
     default: print_usage(stderr, argv[0]); return -1;
     }
@@ -135,6 +144,47 @@ static void print_message(const uint8_t *buf, uint32_t len) {
     printf(" %02x", buf[i]);
   }
   printf("\n");
+}
+
+// Latency samples are nanoseconds in 32 bits (saturating at about 4.3 s); at 4 bytes
+// each this caps the memory at 64 MB.
+#define LATENCY_MAX_SAMPLES (1UL << 24)
+
+static int compare_u32(const void *a, const void *b) {
+  uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+  return (x > y) - (x < y);
+}
+
+// Nearest-rank percentile of sorted samples, in microseconds. permille is 500 for
+// the median, 999 for the 99.9th percentile.
+static double percentile_us(const uint32_t *sorted, size_t n, unsigned permille) {
+  size_t rank = (n * permille + 999) / 1000;
+  return (double)sorted[(rank < 1 ? 1 : rank) - 1] / 1e3;
+}
+
+static void print_latency(uint32_t *samples, size_t n, uint64_t no_send_time,
+                          uint64_t clock_behind, uint64_t not_recorded) {
+  if (n == 0) {
+    printf("Latency: n=0 (no message carried a usable send time)\n");
+  } else {
+    qsort(samples, n, sizeof(*samples), compare_u32);
+    uint64_t sum = 0;
+    for (size_t i = 0; i < n; i++) {
+      sum += samples[i];
+    }
+    printf("Latency: n=%zu min=%.1f p50=%.1f p90=%.1f p99=%.1f p99.9=%.1f max=%.1f "
+           "mean=%.1f us\n",
+           n, samples[0] / 1e3, percentile_us(samples, n, 500),
+           percentile_us(samples, n, 900), percentile_us(samples, n, 990),
+           percentile_us(samples, n, 999), samples[n - 1] / 1e3,
+           (double)sum / (double)n / 1e3);
+  }
+  if (no_send_time != 0 || clock_behind != 0 || not_recorded != 0) {
+    printf("Latency left out: %llu without a send time, %llu received before their send "
+           "time (the clocks differ), %llu over the sample limit\n",
+           (unsigned long long)no_send_time, (unsigned long long)clock_behind,
+           (unsigned long long)not_recorded);
+  }
 }
 
 int main(int argc, char **argv) {
@@ -197,6 +247,20 @@ int main(int argc, char **argv) {
   uint64_t expected = 0;
   double first_message = 0, last_message = 0;
 
+  uint32_t *latency = NULL;
+  size_t latency_count = 0, latency_capacity = 0;
+  uint64_t no_send_time = 0, clock_behind = 0, not_recorded = 0;
+  if (options.latency) {
+    latency_capacity = options.count != 0 && options.count < LATENCY_MAX_SAMPLES
+                           ? options.count
+                           : LATENCY_MAX_SAMPLES;
+    latency = malloc(latency_capacity * sizeof(*latency));
+    if (latency == NULL) {
+      perror("malloc");
+      return 1;
+    }
+  }
+
   while (!stop_requested && (options.count == 0 || messages < options.count)) {
     int n = ibv_poll_cq(side.cq, POLL_BATCH, wc);
     if (n < 0) {
@@ -212,6 +276,7 @@ int main(int argc, char **argv) {
       uint32_t len = wc[i].byte_len;
       uint8_t *buf = pool + (size_t)slot * msg_size;
       last_message = now();
+      uint64_t received_ns = options.latency ? mono_ns() : 0;
       if (messages == 0) {
         first_message = last_message;
         print_message(buf, len);
@@ -227,6 +292,19 @@ int main(int argc, char **argv) {
           expected = seq + 1;
         }
       }
+      if (options.latency && messages >= options.latency_skip) {
+        uint64_t sent_ns;
+        if (payload_sent_ns(buf, len, &sent_ns) != 0) {
+          no_send_time++;
+        } else if (received_ns < sent_ns) {
+          clock_behind++;
+        } else if (latency_count < latency_capacity) {
+          uint64_t delay = received_ns - sent_ns;
+          latency[latency_count++] = delay > UINT32_MAX ? UINT32_MAX : (uint32_t)delay;
+        } else {
+          not_recorded++;
+        }
+      }
       messages++;
       bytes += len;
       if (qp_post_recv(qp, slot, buf, msg_size, side.mr->lkey) != 0) {
@@ -239,6 +317,9 @@ int main(int argc, char **argv) {
   printf("Received %llu messages, %llu bytes in %.3f s: %.2f Gbps\n",
          (unsigned long long)messages, (unsigned long long)bytes, elapsed,
          elapsed > 0 ? (double)bytes * 8 / elapsed / 1e9 : 0.0);
+  if (options.latency) {
+    print_latency(latency, latency_count, no_send_time, clock_behind, not_recorded);
+  }
   if (options.verify) {
     printf("Verify: %llu corrupted, %llu out of order\n",
            (unsigned long long)corrupted, (unsigned long long)out_of_order);

@@ -67,8 +67,30 @@ The existing `client` also works as the source for a single message (`./client -
 | `--msg-size` | relay, sink | Size of one receive buffer, so the largest message. A larger message makes the receive fail. Keep `source --size` at or below it. Default 4096. |
 | `--pool` | relay, sink | Receive buffers. When all are in use the sender is held back by RNR retries. Default 16. On the BlueField-3 testbed, `--pool 16 --window 16` was about 20 times slower than `--pool 64 --window 16` at 1 KB. |
 | `--window` | source | Messages in flight. Default 16. |
+| `--latency` | sink | Time each message from the source's post to the sink's receive; see Latency below. |
+| `--latency-skip` | sink | Leave the first N messages out of the latency figures. Default 0. |
 | `--mtu` | all | Path MTU, 256 to 4096. Default 1024, like `client` and `server`. 4096 needs a link MTU of about 4200. |
 | `--count` | all | Messages before exiting. `0` on relay and sink means until Ctrl+C. |
+
+## Latency
+
+`source` writes the time it posts each send (`CLOCK_MONOTONIC`, nanoseconds) into bytes 8 to 15 of the message. `sink --latency` subtracts it from the time it polls the receive completion, so the figure is the delay from the source through the relay to that sink. The relay forwards the bytes untouched. The sink prints one line after the throughput line:
+
+```
+Latency: n=20000 min=<> p50=<> p90=<> p99=<> p99.9=<> max=<> mean=<> us
+```
+
+Read it with these in mind:
+
+- **One clock.** The send time and the receive time must come from the same `CLOCK_MONOTONIC`, so the source and the sink must run on the same machine. On the BlueField-3 testbed they do (all on the DPU1 ARM cores), so the path leaves DPU1 on `p0` and comes back on `p1`: a round trip. If they run on different machines the figure is meaningless; the sink counts a message that arrives before its send time and reports it on a `Latency left out` line.
+- **Use `--window 1` for the delay of a single message.** With a larger window, a message waits behind the ones sent before it, and the figure includes that queueing. Both are worth measuring, separately.
+- **The times are when the CPU sees the event**, not when the packet is on the wire: the send time is taken just before `ibv_post_send`, and the receive time when the sink polls the completion.
+- **The first messages can be slow** while OVS sets up the flow. `--latency-skip N` leaves them out.
+- The message must be at least 16 bytes (`--size 16`). The pattern that `--verify` checks starts at byte 16, so the source and sink must be built from the same sources.
+
+```sh
+./bench.sh --latency -w 1 -r 1 1024:20000   # adds "latency p50 a,b,c p99 a,b,c us", one value per sink
+```
 
 ## What a completed send means
 

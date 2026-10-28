@@ -38,8 +38,9 @@ static void print_usage(FILE *out, const char *program) {
           "  --size       bytes per message, at least %d (default 64)\n"
           "  --window     messages in flight at once (default 16)\n"
           "  --mtu        path MTU: 256..4096 (default 1024)\n"
-          "The size must not exceed the relay's and the sinks' --msg-size.\n",
-          program, DEFAULT_PORT, PAYLOAD_MIN_LEN);
+          "The size must not exceed the relay's and the sinks' --msg-size.\n"
+          "A message of %d bytes or more carries its send time, which sink --latency uses.\n",
+          program, DEFAULT_PORT, PAYLOAD_MIN_LEN, PAYLOAD_TS_MIN_LEN);
 }
 
 static int parse_options(int argc, char **argv, SourceOptions *options) {
@@ -156,6 +157,7 @@ int main(int argc, char **argv) {
   for (int slot = 0; slot < window && posted < options.count; slot++, posted++) {
     uint8_t *buf = buffers + (size_t)slot * size;
     payload_fill(buf, size, posted);
+    payload_stamp(buf, size, mono_ns());
     if (qp_post_send(qp, (uint64_t)slot, buf, size, side.mr->lkey) != 0) {
       return 1;
     }
@@ -179,6 +181,7 @@ int main(int argc, char **argv) {
         uint32_t slot = (uint32_t)wc[i].wr_id;
         uint8_t *buf = buffers + (size_t)slot * size;
         payload_fill(buf, size, posted);
+        payload_stamp(buf, size, mono_ns());
         if (qp_post_send(qp, slot, buf, size, side.mr->lkey) != 0) {
           return 1;
         }
