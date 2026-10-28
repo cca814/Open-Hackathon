@@ -65,7 +65,7 @@ The existing `client` also works as the source for a single message (`./client -
 | Option | Where | Meaning |
 |---|---|---|
 | `--msg-size` | relay, sink | Size of one receive buffer, so the largest message. A larger message makes the receive fail. Keep `source --size` at or below it. Default 4096. |
-| `--pool` | relay, sink | Receive buffers. When all are in use the sender is held back by RNR retries. Default 16. |
+| `--pool` | relay, sink | Receive buffers. When all are in use the sender is held back by RNR retries. Default 16. On the BlueField-3 testbed, `--pool 16 --window 16` was about 20 times slower than `--pool 64 --window 16` at 1 KB. |
 | `--window` | source | Messages in flight. Default 16. |
 | `--mtu` | all | Path MTU, 256 to 4096. Default 1024, like `client` and `server`. 4096 needs a link MTU of about 4200. |
 | `--count` | all | Messages before exiting. `0` on relay and sink means until Ctrl+C. |
@@ -73,3 +73,14 @@ The existing `client` also works as the source for a single message (`./client -
 ## What a completed send means
 
 The sender's completion comes from the relay's NIC when it has received the message. It does not mean the targets have it. The relay's own sends to the targets are retried by the NICs, and the relay exits with an error if one fails.
+
+Because of this the sender never waits for the relay, so it keeps sending until the relay's pool is empty and then slows down on RNR retries. The throughput you measure is shaped by the RNR timer (`min_rnr_timer` in `qp.c`), not only by the relay.
+
+## On the BlueField-3 testbed
+
+`dpu-net.sh` sets up the SFs, OVS ports and IPs on each DPU, and `bench.sh` runs the message-size sweep (three sinks and the source on DPU1, the relay on DPU2). The layout, the pitfalls found on the hardware (one RDMA process per SF, no GID on `p0`/`p1`, ARP with several IPs on a subnet) and the measured results are in `CLAUDE.md`.
+
+```sh
+./dpu-net.sh dpu1 up       # on DPU1; run `dpu2 up` on DPU2
+./bench.sh -r 1 1024:20000 # from a machine that can ssh to both DPUs
+```
