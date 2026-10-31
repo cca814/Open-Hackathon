@@ -67,6 +67,7 @@ The existing `client` also works as the source for a single message (`./client -
 | `--msg-size` | relay, sink | Size of one receive buffer, so the largest message. A larger message makes the receive fail. Keep `source --size` at or below it. Default 4096. |
 | `--pool` | relay, sink | Receive buffers. When all are in use the sender is held back by RNR retries. Default 16. On the BlueField-3 testbed, `--pool 16 --window 16` was about 20 times slower than `--pool 64 --window 16` at 1 KB. |
 | `--window` | source | Messages in flight. Default 16. |
+| `--receivers` | sink | QPs to serve in one process, one per TCP port: `--port 10100 --receivers 5` listens on 10100 to 10104. Each QP has its own `--pool` buffers, `--count` and figures. Default 1. See Several flows below. |
 | `--latency` | sink | Time each message from the source's post to the sink's receive; see Latency below. |
 | `--latency-skip` | sink | Leave the first N messages out of the latency figures. Default 0. |
 | `--busy` | relay | At the end, print `Busy: <p>% of <t> s handling completions`: the share of time from the first message to the end that the relay spent working on completions, not spinning on empty polls. See Is the relay CPU-bound below. |
@@ -105,6 +106,20 @@ The figure is a lower bound. The `ibv_poll_cq` calls that return completions and
 ```sh
 ./bench.sh --busy 1024:300000   # adds "relay busy <p>%"
 ```
+
+## Several flows, several receivers
+
+One `sink` process can serve several targets. `--port 10100 --receivers 5` makes it listen on 10100 to 10104 and run one QP on each, all on one device, so the relay gets `--target <ip>:10100` up to `--target <ip>:10104`. Every QP has its own sequence check and latency figures; with more than one, each line of its summary starts with `[r<i>] `.
+
+`flows.sh` runs F of these groups at once, each with its own source, relay and sink process (a relay has one `QP_in`, so a flow needs its own). On the testbed every process needs its own SF, so run `dpu-net.sh dpu1 up flows` and `dpu-net.sh dpu2 up flows` first.
+
+```sh
+./flows.sh -f 3 -R 5 -w 1 -r 3 -o results.txt 64:10000000 16384:100000   # SIZE[:COUNT], one line per run
+```
+
+- The flows are separate processes. Unlike one shared forwarder, they do not queue behind one another.
+- `source ... Mmsg/s in all` is flows times count over the longest source time. A source's completion only means its relay's NIC has the message, so `--window 1` is stop-and-wait to the relay, not to the receivers. Delivery to the receivers is in the `sinks` rates and in `latency`, which runs from the source's post to each receiver's poll (one way, no ACK) and is given as the lowest and highest over all receivers.
+- One sink thread polls all of its QPs, so with many receivers and small messages it can become the limit. With a byte-by-byte check it did: 5 receivers at 1 KB gave p50 230 µs. `payload_fill` and `payload_check` now copy and compare a table with `memcpy` and `memcmp`; the message bytes are the same as before.
 
 ## What a completed send means
 

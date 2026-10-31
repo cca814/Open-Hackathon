@@ -2,6 +2,8 @@
 #define _PAYLOAD_H
 
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 // Test message: an 8-byte big-endian sequence number, then, when the message is
@@ -39,13 +41,28 @@ static inline uint32_t payload_pattern_start(uint32_t len) {
   return len >= PAYLOAD_TS_MIN_LEN ? 16 : 8;
 }
 
-static inline void payload_fill(uint8_t *buf, uint32_t len, uint64_t seq) {
+// The pattern byte at offset i is (uint8_t)(seq + i): a ramp that wraps every 256
+// bytes. payload_fill and payload_check copy and compare it from this table with
+// memcpy and memcmp, which on the DPU's ARM cores are much faster than a byte loop
+// (a sink checking several QPs from one thread cannot keep up with the loop).
+// The table must be built for the largest message. NULL if out of memory.
+static inline uint8_t *payload_ramp_new(uint32_t max_len) {
+  uint8_t *ramp = malloc((size_t)max_len + 256);
+  for (size_t i = 0; ramp != NULL && i < (size_t)max_len + 256; i++) {
+    ramp[i] = (uint8_t)i;
+  }
+  return ramp;
+}
+
+static inline void payload_fill(uint8_t *buf, uint32_t len, uint64_t seq,
+                                const uint8_t *ramp) {
+  uint32_t start = payload_pattern_start(len);
   payload_put64(buf, seq);
-  for (uint32_t i = 8; i < payload_pattern_start(len) && i < len; i++) {
+  for (uint32_t i = 8; i < start && i < len; i++) {
     buf[i] = 0;
   }
-  for (uint32_t i = payload_pattern_start(len); i < len; i++) {
-    buf[i] = (uint8_t)(seq + i);
+  if (len > start) {
+    memcpy(buf + start, ramp + ((seq + start) & 255), len - start);
   }
 }
 
@@ -68,15 +85,15 @@ static inline int payload_sent_ns(const uint8_t *buf, uint32_t len, uint64_t *ns
 
 // Returns 0 and stores the sequence number if the message is intact. The send
 // time is not checked: it differs on every message.
-static inline int payload_check(const uint8_t *buf, uint32_t len, uint64_t *seq) {
+static inline int payload_check(const uint8_t *buf, uint32_t len, uint64_t *seq,
+                                const uint8_t *ramp) {
   if (len < PAYLOAD_MIN_LEN) {
     return -1;
   }
   uint64_t value = payload_get64(buf);
-  for (uint32_t i = payload_pattern_start(len); i < len; i++) {
-    if (buf[i] != (uint8_t)(value + i)) {
-      return -1;
-    }
+  uint32_t start = payload_pattern_start(len);
+  if (len > start && memcmp(buf + start, ramp + ((value + start) & 255), len - start) != 0) {
+    return -1;
   }
   *seq = value;
   return 0;

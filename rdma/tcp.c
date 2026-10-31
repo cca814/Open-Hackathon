@@ -49,9 +49,9 @@ int receive_connection_data(int fd, void *data, size_t len) {
   return 0;
 }
 
-int bind_server(const char *port) {
+int listen_server(const char *port) {
   struct addrinfo hints, *res;
-  int listen_fd = -1, conn_fd, on = 1, rc;
+  int listen_fd = -1, on = 1, rc;
   memset(&hints, 0, sizeof(hints));
 
   hints.ai_family = AF_INET;       // IPV4
@@ -77,12 +77,17 @@ int bind_server(const char *port) {
   }
   freeaddrinfo(res);
 
+  return listen_fd;
+}
+
+int bind_server(const char *port) {
+  int listen_fd = listen_server(port);
   if (listen_fd < 0) {
     return -1;
   }
 
   printf("[Server] Waiting for IPv4 client on port %s ...\n", port);
-  conn_fd = accept(listen_fd, NULL, NULL);
+  int conn_fd = accept(listen_fd, NULL, NULL);
   close(listen_fd);
 
   return conn_fd;

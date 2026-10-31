@@ -60,6 +60,8 @@ sink A/B/C (QP1..3) ◀──── Port 2 ◀═══════ Port 4 ◀�
 ~/baseline/rdma/dpu-net.sh dpu1 down    # 還原(刪額外的 SF、拿掉 IP 與 ARP 參數)
 ```
 
+`up flows` 另外建 `rdma/flows.sh` 用的 SF(三個並行 flow,每個 flow 一個 source、一個 relay、一個 sink 行程):DPU1 在 PF0 多建 2 個(`enp3s0f0s1`/`s2`,10.0.1.3、10.0.1.4,給 source),DPU2 在 PF0 與 PF1 各多建 2 個(10.0.1.5、10.0.1.6 與 10.0.2.5、10.0.2.6,給 relay),兩台都設 `arp_ignore=1`、`arp_announce=2`。`down` 一併刪掉。新建的 SF 的 netdev 可能是 administratively down,`up` 現在會 `ip link set up`。
+
 子網:`10.0.1.0/24` = Port 1↔3(`p0`),`10.0.2.0/24` = Port 2↔4(`p1`)。DPU1 的 `ovsbr1`/`ovsbr2` 原本就把 SF 的 representor 和 `p0`/`p1` 橋在一起;DPU2 的原本沒有 `p0`/`p1`,`up` 會加進去。
 
 ### 實測查到、會踩到的坑(都是這台機器上跑出來的)
@@ -112,6 +114,18 @@ rdma/bench.sh -d baseline_fast 1024:300000   # 用 DPU 上另一份程式副本(
 
 開頭會先跑一次 warm-up(讓 OVS 把流程 offload),結束時不論成敗都會收掉 sink / relay / source。每行會印出用的資料夾(`dir=`),所以不同程式副本的結果可以放在同一個檔案裡比。**正式掃描請加 `-o` 存檔。**
 
+### 多 flow、多 receiver:`rdma/flows.sh`
+
+每個 flow 一組 source、relay、sink 行程;一個 sink 行程用 `--receivers N` 在一個 SF 上開 N 個 QP(TCP 埠從 `--port` 起連續 N 個)。需要先在兩台 DPU 跑 `dpu-net.sh dpu1|dpu2 up flows`,程式放在兩台的 `~/baseline_flows/rdma/`(`-d` 可改)。開跑前會檢查每個 SF 的 GID index 1 是不是對應 IP 的 IPv4 位址。
+
+```sh
+rdma/flows.sh -f 3 -R 5 -w 1 -r 3 -o docs/results/xxx.txt 64:10000000 4096:10000000 16384:100000
+```
+
+- 每個 flow 是獨立的 relay 行程,不會像單一共用 controller 那樣互相排隊。
+- `--window 1` 是對 relay 網卡的 stop-and-wait(source 的 completion 來自 relay 的 NIC),不是等 receiver。到 receiver 的時間看 `sinks` 與 `latency`(source post 到各 receiver 輪詢到,單向)。
+- 一個 sink 行程只有一個執行緒輪詢所有 QP,receiver 多、訊息小時它可能成為上限。逐位元組驗證時,5 個 receiver 的 1 KB 延遲 p50 到 230 µs。
+
 ## 量測結果(2026-10-25)
 
 原始資料:[docs/results/2026-10-25-sweep.txt](docs/results/2026-10-25-sweep.txt)(主掃描的 18 行,未修改),格式與來源見 [docs/results/README.md](docs/results/README.md)。下面其他實驗(拿掉 `--verify`、pool / window 組合、改過的程式副本、`ib_send_bw`、RNR 計數器)的數字是從終端機輸出讀來的,**沒有存成檔案**,可信度比主掃描低。
@@ -131,6 +145,7 @@ rdma/bench.sh -d baseline_fast 1024:300000   # 用 DPU 上另一份程式副本(
 
 這組數字**不是 relay 的上限**,主要被測試程式本身和 RNR 卡住:
 
+- (2026-10-31 起 `payload.h` 的填寫與驗證改用 `memcpy` / `memcmp`,訊息位元組不變。下面的數字與 `baseline_fast` 等副本都是舊版的逐位元組迴圈。)
 - `--verify`(sink 逐位元組檢查)與 `payload_fill`(source 每則逐位元組填資料)都是 ARM 上的純量迴圈,大訊息時成為瓶頸。拿掉 `--verify`:1KB 變 9.5 Gbps(1.16 百萬則/秒)、16KB / 64KB 變 14.4 Gbps。
 - RNR:source 的 completion 來自 relay 網卡的 ACK,和 relay 有沒有轉完無關,所以 source 會一路送到把 relay 的 pool 吃光,之後靠 RNR 限速。`qp.c` 的 `min_rnr_timer = 12`(IB 規格對照表約 0.64 ms),每次 relay 的 `QP_in` 沒有可用接收緩衝(`out_of_buffer` 計數器增加,64B 跑 10 萬則有 1106 次)source 就等一次。只把它改成 1,訊息率:64B 0.043→0.145、1KB 0.24→0.51、16KB 0.052→0.073 百萬則/秒。
 

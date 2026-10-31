@@ -127,6 +127,12 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  uint8_t *ramp = payload_ramp_new(size);
+  if (ramp == NULL) {
+    perror("malloc");
+    return 1;
+  }
+
   RdmaSide side;
   if (side_open(&side, options.device, options.ib_port, options.gid_index,
                 window + 1) != 0 ||
@@ -156,7 +162,7 @@ int main(int argc, char **argv) {
   double start = now();
   for (int slot = 0; slot < window && posted < options.count; slot++, posted++) {
     uint8_t *buf = buffers + (size_t)slot * size;
-    payload_fill(buf, size, posted);
+    payload_fill(buf, size, posted, ramp);
     payload_stamp(buf, size, mono_ns());
     if (qp_post_send(qp, (uint64_t)slot, buf, size, side.mr->lkey) != 0) {
       return 1;
@@ -180,7 +186,7 @@ int main(int argc, char **argv) {
       if (posted < options.count) {
         uint32_t slot = (uint32_t)wc[i].wr_id;
         uint8_t *buf = buffers + (size_t)slot * size;
-        payload_fill(buf, size, posted);
+        payload_fill(buf, size, posted, ramp);
         payload_stamp(buf, size, mono_ns());
         if (qp_post_send(qp, slot, buf, size, side.mr->lkey) != 0) {
           return 1;
