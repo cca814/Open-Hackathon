@@ -25,6 +25,7 @@ pool=64               # keep it larger than the window, see bench.sh
 window=1
 verify=--verify
 warmup=1
+check=1               # busy-check.sh before the first run, and the wire column
 out=                  # file to append the result lines to; empty means screen only
 GID=1
 
@@ -38,7 +39,7 @@ RELAY_PORT=10001      # the relay of flow f listens on RELAY_PORT + f
 SINK_PORT=10100       # the sink of flow f listens on SINK_PORT + 10 f, one port per receiver
 
 usage() {
-    echo "usage: $0 [-f FLOWS] [-R RECEIVERS] [-r REPS] [-p POOL] [-w WINDOW] [-d DIR] [-o FILE] [--no-verify] [--no-warmup] [SIZE[:COUNT]...]" >&2
+    echo "usage: $0 [-f FLOWS] [-R RECEIVERS] [-r REPS] [-p POOL] [-w WINDOW] [-d DIR] [-o FILE] [--no-verify] [--no-warmup] [--no-check] [SIZE[:COUNT]...]" >&2
     exit 2
 }
 
@@ -54,6 +55,7 @@ while [ $# -gt 0 ]; do
         -o) out=$2; shift 2 ;;
         --no-verify) verify=; shift ;;
         --no-warmup) warmup=0; shift ;;
+        --no-check) check=0; shift ;;
         -h|--help) usage ;;
         -*) usage ;;
         *) break ;;
@@ -109,6 +111,8 @@ run_once() {
     msg=$((size + 64)); [ $msg -lt 4096 ] && msg=4096
 
     stop_all
+    local before="" after="" wire_col=""
+    [ "$check" = 1 ] && before=$("$(dirname "$0")/busy-check.sh" counters)
     # A background command ends with `&`, so the commands are joined with spaces.
     cmd="cd ~/$dir/rdma; rm -f flow*.log;"
     for ((f = 0; f < flows; f++)); do
@@ -164,8 +168,18 @@ run_once() {
     p50=$(sed -n 's/^[0-9]* \(\[r[0-9]*\] \)*Latency: .* p50=\([0-9.]*\) .*/\2/p' <<< "$snk" | range)
     p99=$(sed -n 's/^[0-9]* \(\[r[0-9]*\] \)*Latency: .* p99=\([0-9.]*\) .*/\2/p' <<< "$snk" | range)
 
-    echo "flows=$flows receivers=$receivers size=$size count=$count pool=$pool window=$window dir=$dir | source $mps Mmsg/s in all, ${s_max:-NA} s longest, ${s_sum:-NA} Gbps in all | relay in $r_in out $r_out Gbps | relay busy $r_busy % | sinks $k_gbps Gbps | verify $ok | latency p50 $p50 p99 $p99 us"
+    if [ "$check" = 1 ]; then
+        after=$("$(dirname "$0")/busy-check.sh" counters)
+        wire_col=" | wire $("$(dirname "$0")/busy-check.sh" wire "$before" "$after" "$flows" "$receivers" "$size" "$count")"
+    fi
+
+    echo "flows=$flows receivers=$receivers size=$size count=$count pool=$pool window=$window dir=$dir | source $mps Mmsg/s in all, ${s_max:-NA} s longest, ${s_sum:-NA} Gbps in all | relay in $r_in out $r_out Gbps | relay busy $r_busy % | sinks $k_gbps Gbps | verify $ok | latency p50 $p50 p99 $p99 us${wire_col}"
 }
+
+if [ "$check" = 1 ]; then
+    # Another user, or a system job, would change the numbers. See busy-check.sh.
+    "$(dirname "$0")/busy-check.sh" || { echo "flows.sh: the DPUs look busy, see above (--no-check runs anyway)" >&2; exit 1; }
+fi
 
 if [ "$warmup" = 1 ]; then
     # The first traffic over a new SF is slow while OVS offloads it.

@@ -127,6 +127,19 @@ The sender's completion comes from the relay's NIC when it has received the mess
 
 Because of this the sender never waits for the relay, so it keeps sending until the relay's pool is empty and then slows down on RNR retries. The throughput you measure is shaped by the RNR timer (`min_rnr_timer` in `qp.c`), not only by the relay.
 
+## Is anyone else using the DPUs?
+
+The DPUs are shared, and `who` only lists logins that have a terminal: a script run over `ssh host command`, a `nohup` or `tmux` job, a container, or a program on the host side of the same card does not show. `busy-check.sh` looks at what the machines are doing, and does not change anything:
+
+```sh
+./busy-check.sh                    # 5 s on both DPUs; exit 0 clear, 1 busy, 2 could not sample
+./busy-check.sh -t 10 --cpu 30 --gbps 0.5
+```
+
+It is busy if a process that is not root's uses 20% of a core or more (`--cpu`), if p0 or p1 carries 0.1 Gbps or more in either direction (`--gbps`), or if any process has a `/dev/infiniband/uverbs*` device open. A root process above the CPU limit is only a warning: it is a system job such as apt, but it disturbs a run as much as a user would. The port counters also see traffic from the hosts, which never uses the ARM cores. A program that sleeps while idle, or that runs only between samples, is not seen.
+
+`bench.sh` and `flows.sh` run it before the first run and stop if the DPUs look busy; `--no-check` skips it. They also read the port byte counters before and after each run and add a `wire` column: the growth of what each side sent on p0 and p1 divided by what the run should send (per packet 58 bytes of headers and ICRC, 62 bytes per ACK, from the message size, the count and the path MTU of 1024). From 1.2 in the data direction there was more on the link than the run sent. The estimate is rough and what the counters count exactly is not confirmed, so a value a little off 1 is normal.
+
 ## On the BlueField-3 testbed
 
 `dpu-net.sh` sets up the SFs, OVS ports and IPs on each DPU, and `bench.sh` runs the message-size sweep (three sinks and the source on DPU1, the relay on DPU2). The layout, the pitfalls found on the hardware (one RDMA process per SF, no GID on `p0`/`p1`, ARP with several IPs on a subnet) and the measured results are in `CLAUDE.md`.

@@ -42,7 +42,7 @@ sink A/B/C (QP1..3) ◀──── Port 2 ◀═══════ Port 4 ◀�
 | WS#1 DPU ARM | `DPU1` | 192.168.100.2,ProxyJump `DPU-host1` | aarch64,16 core,**source 與 3 個 sink 跑這裡** |
 | WS#2 DPU ARM | `DPU2` | 192.168.100.2,ProxyJump `DPU-host2` | **relay 跑這裡** |
 
-- 兩台 DPU 是**共用的**:其他組員也會登入,DPU 也可能被重開機(DPU1 在 2026-10-26 16:07 重開過)。重開機後 IP 和額外的 SF 會消失,OVS 的 port 會留著。動手改設定前先 `who` 看有沒有人在用。
+- 兩台 DPU 是**共用的**:其他組員也會登入,DPU 也可能被重開機(DPU1 在 2026-10-26 16:07 重開過)。重開機後 IP 和額外的 SF 會消失,OVS 的 port 會留著。動手改設定前先看有沒有人在用。`who` 只列有終端機的登入,無終端機的 ssh 指令、`nohup` / `tmux`、容器、host 端的程式都看不到,所以用 `rdma/busy-check.sh`(看 CPU、`p0`/`p1` 埠流量、誰開著 RDMA 裝置;非 root 行程 ≥ 20% 單核或埠流量 ≥ 0.1 Gbps 就算忙,root 的系統工作只警告)。`bench.sh` / `flows.sh` 開跑前會自動跑它,`--no-check` 可略過,結果行最後多一欄 `wire`(埠位元組增量 ÷ 這次應送的量;從 1.2 起代表鏈路上有別人的流量,估算很粗)。
 - 使用者都是 `a2-07`。四台都有 gcc / make,`/dev/infiniband/uverbs*` 是 0666,跑 verbs 程式不需要 root。
 - **sudo**:DPU1 / DPU2 免密碼。兩台 host 上 `a2-07` **不在 sudoers**(sudo 群組只有其他管理員帳號),要請 host 管理員處理。
 - `DPU1` 與 `DPU2` 的 HostName 都是 192.168.100.2,所以 `~/.ssh/config` 的兩個 Host 區塊各有 `HostKeyAlias DPU1` / `HostKeyAlias DPU2`,直接 `ssh DPU1` / `ssh DPU2` 即可。不要用 `ssh-keygen -R` 或 `StrictHostKeyChecking=no` 硬過。兩台 DPU 的 `hostname` 都是 `localhost.localdomain`,要分辨是哪一台,看 `p0` 的 MAC(DPU1 `9c:63:c0:50:96:64`、DPU2 `9c:63:c0:50:85:c4`)。
