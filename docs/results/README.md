@@ -35,6 +35,15 @@ Is the relay's single thread the limit? Written by `rdma/bench.sh --busy -o`, so
 - The 1 KB and 4 KB runs last only 0.2 to 0.8 s. The 1 KB `--no-verify` rate varies from 0.68 to 0.92 Mmsg/s across the three runs.
 - `--busy` reads the clock twice per batch of completions, so the rates here may be a little lower than without it. `relay busy` is a lower bound: the `ibv_poll_cq` calls that return completions are not counted.
 
+## 2026-10-31-busy-fast.txt
+
+The same `relay busy` measurement with the test programs' limits taken out: does the relay's thread become the limit once `--verify`, the pattern fill and the long RNR timer are out of the way? 18 lines (3 runs each of 64 B, 256 B, 1 KB, 4 KB, 16 KB and 64 KB), written by `rdma/bench.sh -d baseline_fast_busy --busy --no-verify -o`, so each line has a timestamp.
+
+- Programs: `~/baseline_fast_busy` on both DPUs, a copy of `~/baseline_fast` (`min_rnr_timer = 1`, `payload_fill` writes only the 8-byte sequence number; `qp.c`, `payload.h`, `sink.c` and `source.c` are byte-identical to it) with `relay.c` replaced by the one that has `--busy`. The `relay.c` in `~/baseline_fast` is the one before `--busy`, so nothing else differs. The copy exists only on the DPUs.
+- Layout, `--pool 64 --window 16`, network setup and the `doca_argus` load as in `2026-10-31-busy.txt`. No `--verify`, because the pattern is not filled.
+- Counts: 300000 messages up to 4 KB, 100000 for 16 KB, 30000 for 64 KB. The runs last 0.4 to 2.2 s. The 4 KB rate varies from 0.23 to 0.40 Mmsg/s across the three runs.
+- Compare with the 2026-10-25 table in `CLAUDE.md` (same programs but no `--busy`): 64 B to 1 KB (0.14 to 0.15 Mmsg/s), 16 KB (0.23) and 64 KB (0.059, 92.6 Gbps out) match it. 4 KB does not: 0.23, 0.31 and 0.40 here, 0.41 there. Whether `--busy` or run-to-run spread causes that is not known.
+
 ## What is not here
 
 Some numbers in `CLAUDE.md` were read from the console and not saved as files: the runs without `--verify`, the `--pool` and `--window` combinations, the copies with a smaller `min_rnr_timer` or a header-only `payload_fill`, the `ib_send_bw` reference and the RNR counters. Treat them as less well backed than the sweep above.
