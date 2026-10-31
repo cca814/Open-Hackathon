@@ -10,6 +10,7 @@
 #   ./bench.sh --no-verify 16384:100000
 #   ./bench.sh -o results.txt          also append each line, with a timestamp, to a file
 #   ./bench.sh --latency -w 1 -r 1 1024:20000   add each sink's p50 and p99 delay (window 1: no queueing)
+#   ./bench.sh --busy 1024:300000      add the share of time the relay spends handling completions
 #
 # Each argument is SIZE[:COUNT]. One line is printed per run.
 set -uo pipefail
@@ -22,6 +23,7 @@ pool=64           # pool == window makes the sender wait on RNR retries, so keep
 window=16
 verify=--verify
 lat=              # --latency adds sink --latency and the p50 / p99 columns
+busy=             # --busy adds relay --busy and the busy column
 warmup=1
 out=              # file to append the result lines to; empty means screen only
 
@@ -36,7 +38,7 @@ GID=1
 DEFAULT_SIZES="64:500000 256:500000 1024:300000 4096:200000 16384:100000 65536:30000"
 
 usage() {
-    echo "usage: $0 [-r REPS] [-p POOL] [-w WINDOW] [-d DIR] [-o FILE] [--no-verify] [--latency] [--no-warmup] [SIZE[:COUNT]...]" >&2
+    echo "usage: $0 [-r REPS] [-p POOL] [-w WINDOW] [-d DIR] [-o FILE] [--no-verify] [--latency] [--busy] [--no-warmup] [SIZE[:COUNT]...]" >&2
     exit 2
 }
 
@@ -50,6 +52,7 @@ while [ $# -gt 0 ]; do
         -o) out=$2; shift 2 ;;
         --no-verify) verify=; shift ;;
         --latency) lat=--latency; shift ;;
+        --busy) busy=--busy; shift ;;
         --no-warmup) warmup=0; shift ;;
         -h|--help) usage ;;
         -*) usage ;;
@@ -81,12 +84,12 @@ run_once() {
         targets+=" --target ${SINK_IPS[$i]}:${SINK_PORTS[$i]}"
     done
     remote $SRC_HOST "$sinks sleep 1"
-    remote $RELAY_HOST "cd ~/$dir/rdma; rm -f relay.log; nohup ./relay --in-device $RELAY_IN_DEV --in-gid $GID --out-device $RELAY_OUT_DEV --out-gid $GID --msg-size $msg --pool $pool $targets --count $count > relay.log 2>&1 < /dev/null & sleep 1"
+    remote $RELAY_HOST "cd ~/$dir/rdma; rm -f relay.log; nohup ./relay --in-device $RELAY_IN_DEV --in-gid $GID --out-device $RELAY_OUT_DEV --out-gid $GID --msg-size $msg --pool $pool $targets --count $count $busy > relay.log 2>&1 < /dev/null & sleep 1"
 
     local src rel snk
     src=$(remote $SRC_HOST "cd ~/$dir/rdma; timeout 300 ./source --device $SRC_DEV --gid-index $GID --server-ip $SRC_IP_TO_RELAY --count $count --size $size --window $window 2>&1 | tail -2")
     sleep 2
-    rel=$(remote $RELAY_HOST "cd ~/$dir/rdma; grep Forwarded relay.log")
+    rel=$(remote $RELAY_HOST "cd ~/$dir/rdma; grep -e Forwarded -e '^Busy' relay.log")
     snk=$(remote $SRC_HOST "cd ~/$dir/rdma; cat sink*.log")
 
     local s_time s_gbps r_time r_in r_out rates ok
@@ -109,7 +112,12 @@ run_once() {
         latency=" | latency p50 ${p50:-NA} p99 ${p99:-NA} us"
     fi
 
-    echo "size=$size count=$count pool=$pool window=$window dir=$dir | source ${s_gbps:-NA} Gbps, $mps Mmsg/s, ${s_time:-NA} s | relay in ${r_in:-NA} out ${r_out:-NA} Gbps | sinks ${rates:-NA} Gbps | verify ${ok}${latency}"
+    local busy_col=""
+    if [ -n "$busy" ]; then
+        busy_col=" | relay busy $(sed -n 's/^Busy: \([0-9.]*\)%.*/\1/p' <<< "$rel" | tail -1 | grep . || echo NA)%"
+    fi
+
+    echo "size=$size count=$count pool=$pool window=$window dir=$dir | source ${s_gbps:-NA} Gbps, $mps Mmsg/s, ${s_time:-NA} s | relay in ${r_in:-NA} out ${r_out:-NA} Gbps${busy_col} | sinks ${rates:-NA} Gbps | verify ${ok}${latency}"
 }
 
 if [ "$warmup" = 1 ]; then

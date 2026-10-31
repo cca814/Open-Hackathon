@@ -69,6 +69,7 @@ The existing `client` also works as the source for a single message (`./client -
 | `--window` | source | Messages in flight. Default 16. |
 | `--latency` | sink | Time each message from the source's post to the sink's receive; see Latency below. |
 | `--latency-skip` | sink | Leave the first N messages out of the latency figures. Default 0. |
+| `--busy` | relay | At the end, print `Busy: <p>% of <t> s handling completions`: the share of time from the first message to the end that the relay spent working on completions, not spinning on empty polls. See Is the relay CPU-bound below. |
 | `--mtu` | all | Path MTU, 256 to 4096. Default 1024, like `client` and `server`. 4096 needs a link MTU of about 4200. |
 | `--count` | all | Messages before exiting. `0` on relay and sink means until Ctrl+C. |
 
@@ -90,6 +91,19 @@ Read it with these in mind:
 
 ```sh
 ./bench.sh --latency -w 1 -r 1 1024:20000   # adds "latency p50 a,b,c p99 a,b,c us", one value per sink
+```
+
+## Is the relay CPU-bound?
+
+The relay is one thread that busy-polls, so `top` shows one core at 100% whether it is working or waiting. `--busy` tells them apart: it adds up the time spent handling completions (receive, the three sends, recycling a slot) and prints it as a share of the time from the first message to the end of the loop.
+
+- **Near 100%**: the loop always has something to do, so the single thread may be the limit.
+- **Well below 100%**: the relay waits, so something else limits the rate (RNR retries, the sinks, the link). More threads would not help.
+
+The figure is a lower bound. The `ibv_poll_cq` calls that return completions and the empty polls are not counted, and the span also includes the wait for the last sends. Reading the clock twice per batch costs a little, so compare throughput against a run without `--busy` before trusting the rate from a run with it.
+
+```sh
+./bench.sh --busy 1024:300000   # adds "relay busy <p>%"
 ```
 
 ## What a completed send means

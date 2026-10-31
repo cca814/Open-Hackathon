@@ -23,6 +23,18 @@ size=1024 count=300000 pool=64 win=16 | src 1.98 Gbps 0.241 Mmsg/s t=1.243s | re
 - `sinks`: the rate each of the three sinks reported.
 - `verify_ok=3/3`: how many sinks printed `Verify: 0 corrupted, 0 out of order`.
 
+## 2026-10-31-busy.txt
+
+Is the relay's single thread the limit? Written by `rdma/bench.sh --busy -o`, so each line has a timestamp and the program directory. The `relay busy` column is the share of time the relay spent handling completions, from the first message to the end of its loop (see "Is the relay CPU-bound?" in `rdma/RELAY.md`).
+
+- Lines 1 to 3 (14:48): `sink --verify`, one run each of 64 B, 1 KB and 4 KB (200000, 200000 and 100000 messages).
+- Lines 4 to 12 (14:52): `--no-verify`, three runs each of the same sizes. These lines end with `verify off`.
+- Layout and options as in the sweep above (`--pool 64 --window 16`), except that the programs are the `baseline_latency` copy: `rdma/` with the latency stamp in `payload.h` and `relay --busy`, built on both DPUs on 2026-10-31. `min_rnr_timer` is still 12.
+- The network was set up with `dpu-net.sh up` for these runs and put back afterwards. On DPU1 `enp3s0f1s2` (10.0.2.4) came up administratively down the second time; `ip link set enp3s0f1s2 up` fixed it before the `--no-verify` runs. Why `up` did not leave it up is not known.
+- During the runs, `ps` on DPU1 showed root's `doca_argus` using about 765% CPU (about 7.6 of the 16 cores) since boot, and another user was logged in. Whether this changes the numbers is not known.
+- The 1 KB and 4 KB runs last only 0.2 to 0.8 s. The 1 KB `--no-verify` rate varies from 0.68 to 0.92 Mmsg/s across the three runs.
+- `--busy` reads the clock twice per batch of completions, so the rates here may be a little lower than without it. `relay busy` is a lower bound: the `ibv_poll_cq` calls that return completions are not counted.
+
 ## What is not here
 
 Some numbers in `CLAUDE.md` were read from the console and not saved as files: the runs without `--verify`, the `--pool` and `--window` combinations, the copies with a smaller `min_rnr_timer` or a header-only `payload_fill`, the `ib_send_bw` reference and the RNR counters. Treat them as less well backed than the sweep above.

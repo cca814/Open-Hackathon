@@ -34,7 +34,7 @@ typedef struct relay_options {
   char listen_port[8];
   unsigned long pool, msg_size, count;
   enum ibv_mtu mtu;
-  int stats;
+  int stats, busy;
   Target targets[MAX_TARGETS];
   int ntargets;
 } RelayOptions;
@@ -67,7 +67,8 @@ static void print_usage(FILE *out, const char *program) {
           "  --msg-size     bytes per buffer, the largest message (default 4096)\n"
           "  --mtu          path MTU: 256..4096 (default 1024)\n"
           "  --count        stop after forwarding this many messages (default: run until Ctrl+C)\n"
-          "  --stats        print throughput once a second\n",
+          "  --stats        print throughput once a second\n"
+          "  --busy         at the end, print the share of time spent handling completions\n",
           program, MAX_TARGETS, DEFAULT_PORT);
 }
 
@@ -104,6 +105,7 @@ static int parse_options(int argc, char **argv, RelayOptions *options) {
       {"mtu", required_argument, NULL, 'm'},
       {"count", required_argument, NULL, 'c'},
       {"stats", no_argument, NULL, 'S'},
+      {"busy", no_argument, NULL, 'B'},
       {"help", no_argument, NULL, 'h'},
       {NULL, 0, NULL, 0}};
   *options = (RelayOptions){.in_port = 1,
@@ -157,6 +159,7 @@ static int parse_options(int argc, char **argv, RelayOptions *options) {
     case 'm': ok = parse_mtu(optarg, &options->mtu) == 0; break;
     case 'c': ok = parse_uint(optarg, ULONG_MAX, &options->count) == 0; break;
     case 'S': options->stats = 1; break;
+    case 'B': options->busy = 1; break;
     case 'h': print_usage(stdout, argv[0]); return 1;
     default: print_usage(stderr, argv[0]); return -1;
     }
@@ -277,6 +280,9 @@ int main(int argc, char **argv) {
   uint64_t stat_messages = 0, stat_bytes = 0;
   double first_message = 0, last_message = 0, next_stat = now() + 1;
   unsigned spin = 0;
+  // --busy: time spent handling completions, summed over the batches that had
+  // any. The poll call itself and the empty polls in between are not counted.
+  double busy_seconds = 0;
 
   while (!stop_requested &&
          !(options.count != 0 && messages >= options.count && inflight == 0)) {
@@ -285,6 +291,7 @@ int main(int argc, char **argv) {
       fprintf(stderr, "ibv_poll_cq failed\n");
       return 1;
     }
+    double batch_start = options.busy && n > 0 ? now() : 0;
     for (int i = 0; i < n; i++) {
       if (wc[i].status != IBV_WC_SUCCESS) {
         fprintf(stderr, "Receive from the sender failed: %s\n",
@@ -308,12 +315,16 @@ int main(int argc, char **argv) {
       messages++;
       bytes += len;
     }
+    if (batch_start != 0) {
+      busy_seconds += now() - batch_start;
+    }
 
     n = ibv_poll_cq(out.cq, POLL_BATCH, wc);
     if (n < 0) {
       fprintf(stderr, "ibv_poll_cq failed\n");
       return 1;
     }
+    batch_start = options.busy && n > 0 ? now() : 0;
     for (int i = 0; i < n; i++) {
       if (wc[i].status != IBV_WC_SUCCESS) {
         int t = 0;
@@ -335,6 +346,9 @@ int main(int argc, char **argv) {
         }
       }
     }
+    if (batch_start != 0) {
+      busy_seconds += now() - batch_start;
+    }
 
     if (options.stats && (++spin & 0x3ff) == 0 && now() >= next_stat) {
       printf("[relay] %llu msg/s, %.2f Gbps in, %.2f Gbps out (total %llu messages)\n",
@@ -354,5 +368,12 @@ int main(int argc, char **argv) {
          "%.2f Gbps in, %.2f Gbps out\n",
          (unsigned long long)messages, (unsigned long long)bytes, ntargets, elapsed,
          gbps(bytes, elapsed), gbps(bytes * (uint64_t)ntargets, elapsed));
+  if (options.busy && messages > 0) {
+    // From the first message to the end of the loop, so it also covers the wait
+    // for the last sends; `elapsed` above stops at the last receive.
+    double span = now() - first_message;
+    printf("Busy: %.1f%% of %.3f s handling completions\n",
+           span > 0 ? busy_seconds / span * 100 : 0.0, span);
+  }
   return 0;
 }
