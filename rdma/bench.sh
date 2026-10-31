@@ -88,7 +88,10 @@ run_once() {
 
     local src rel snk
     src=$(remote $SRC_HOST "cd ~/$dir/rdma; timeout 300 ./source --device $SRC_DEV --gid-index $GID --server-ip $SRC_IP_TO_RELAY --count $count --size $size --window $window 2>&1 | tail -2")
-    sleep 2
+    # The sinks and the relay print their result after the source is done, and a
+    # sink with --latency sorts its samples first, so wait for them to exit.
+    remote $SRC_HOST 'for _ in $(seq 240); do pgrep -u $USER -x sink > /dev/null || break; sleep 0.5; done'
+    remote $RELAY_HOST 'for _ in $(seq 240); do pgrep -u $USER -x relay > /dev/null || break; sleep 0.5; done'
     rel=$(remote $RELAY_HOST "cd ~/$dir/rdma; grep -e Forwarded -e '^Busy' relay.log")
     snk=$(remote $SRC_HOST "cd ~/$dir/rdma; cat sink*.log")
 
