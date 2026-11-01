@@ -117,6 +117,8 @@ One `sink` process can serve several targets. `--port 10100 --receivers 5` makes
 ./flows.sh -f 3 -R 5 -w 1 -r 3 -o results.txt 64:10000000 16384:100000   # SIZE[:COUNT], one line per run
 ```
 
+`make_tables.py results.txt` turns the file into Markdown tables (message rate, relay output and busy share, receiver rate, latency, `--verify` and `wire`), one cell per flows value and message size, the mean of the runs.
+
 - The flows are separate processes. Unlike one shared forwarder, they do not queue behind one another.
 - `source ... Mmsg/s in all` is flows times count over the longest source time. A source's completion only means its relay's NIC has the message, so `--window 1` is stop-and-wait to the relay, not to the receivers. Delivery to the receivers is in the `sinks` rates and in `latency`, which runs from the source's post to each receiver's poll (one way, no ACK) and is given as the lowest and highest over all receivers.
 - One sink thread polls all of its QPs, so with many receivers and small messages it can become the limit. With a byte-by-byte check it did: 5 receivers at 1 KB gave p50 230 µs. `payload_fill` and `payload_check` now copy and compare a table with `memcpy` and `memcmp`; the message bytes are the same as before.
