@@ -219,6 +219,15 @@ Confirm `p0`/`p1`, mlx5 port indices, DPDK port IDs, SF/VF/representor ownership
 
 **Reference:** Cepheus: Accelerating Datacenter Applications with High-Performance RoCE-Capable Multicast (HPCA 2024), Sections III-B and III-D.
 
+**Status: COMPLETE (2026-10-27) for packet fan-out.** The independent IPv6
+wire oracle verified 64 inputs and 128 member outputs. The recorded sustained
+run sent 20,000 inputs across 64 flows and completed 40,000 replicas with zero
+TX errors, replication drops or pending buffers across all eight workers. A
+separate 256-packet unknown-QPN run was counted and dropped exactly; an
+out-of-range QPN configuration exited 2 before EAL/device startup. See
+`reports/milestone-3-experiment-2026-10-27.md`. This does not claim reliable
+multicast RC completion or line-rate capacity.
+
 ## 8. Proposed source layout and group control
 
 Keep modules small and aligned with the packet path; the same worker handles RX, processing and TX completions.
