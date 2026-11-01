@@ -1,0 +1,1 @@
+{"event": "capture_skipped", "reason": "hardware-offloaded OVS bypasses AF_PACKET"}

@@ -3,5 +3,7 @@
 __pycache__/
 
 /.env
-config/groups.m2.runtime.json
+config/*.runtime.json
 tools/rc_qpn_rewrite_test
+tools/m4_rc_ramp
+tools/perftest_qp_gate.so

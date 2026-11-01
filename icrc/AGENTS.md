@@ -167,40 +167,57 @@ RoCEv2 packets can be consumed by an RDMA hardware transport pipeline rather tha
 
 Confirm `p0`/`p1`, mlx5 port indices, DPDK port IDs, SF/VF/representor ownership, switch mode, and any `isolated`/default-forwarding settings on the real BF3. Do not assume `mlx5_0` and `mlx5_1` are DPDK port 0 and port 1. Verify that B's RX and TX paths are feasible with the selected steering mode, and that Node A's OVS hardware offload remains functional.
 
-## 7. Implementation milestones and acceptance criteria
+### Milestone 4 — Real RC traffic, PSN tracking and ACK aggregation
 
-### Milestone 1 — Flow → eight workers → ETH TX
+- Extend the existing two-member fan-out to support **real RoCEv2 RC SEND traffic** from one sender to two receivers, using live ConnectX QPs.
+- Extend the group configuration with sender/receiver QPN mappings, initial PSNs and ACK return-path information. Node A remains responsible for QP establishment and connection-state initialization.
+- Steer receiver-generated RC ACK packets into Node B for aggregation. Rewrite the resulting feedback into a valid sender-facing RC ACK, including the required addressing, QPN and ICRC.
+- Implement Cepheus's core ACK tracking algorithm:
+  - Maintain `AckPSN[i]`, the highest cumulatively acknowledged PSN for each receiver.
+  - Maintain `AggAckPSN`, the highest aggregated ACK PSN forwarded to the sender.
+  - On receiving an ACK, update the corresponding receiver's `AckPSN[i]`.
+  - Compute the group-wide acknowledgment frontier:
 
-- On the target BlueField, confirm SDK versions and physical RX/TX mapping as part of bring-up.
-- DOCA Flow matches RoCEv2 UDP/4791 and steers into eight DPDK RSS queues.
-- Each worker polls one RX queue and submits unchanged packets through its own DOCA ETH TX context, including completion processing and buffer reclamation.
-- Count RX, TX submissions, TX completions, errors and drops; define unmatched traffic policy.
+    \[
+    \text{AggAckPSN} = \min_i(\text{AckPSN}[i])
+    \]
 
-**Done when:** ConnectX-originated packets enter p0 and leave p1 unchanged. Wire captures and counters agree, and sustained traffic does not leak buffers or stall on TX backpressure. Exercise all eight queues with multiple flows; one RC flow need not spread across workers. Record the working target build/run command and port mapping.
+  - Forward a new aggregated ACK only when the group-wide frontier advances. Never acknowledge packets that have not been acknowledged by every receiver.
+  - Implement Cepheus's `triPort` optimization: track the receiver with the minimum `AckPSN` and trigger aggregation when that receiver advances beyond the previous `AggAckPSN`.
+- Handle duplicate, stale and reordered ACKs without regressing the acknowledgment frontier. Use wraparound-safe comparisons for the 24-bit RC PSN.
+- Track per-receiver ACK progress, aggregated ACKs, suppressed ACKs, malformed feedback and sender/receiver completion results.
+- Limit this milestone to controlled, loss-free RC SEND traffic. NACK aggregation, packet-loss recovery and retransmission filtering are deferred to Milestone 5.
 
-### Milestone 2 — Header rewrite and full ICRC
+**Done when:** One sender transmits real RC SEND traffic through Node B to two receivers. Both receivers obtain the expected payloads and report successful receive CQEs, while the sender reports successful send CQEs through the aggregated ACK path. Verify that sender completion follows acknowledgment by both receivers, including when one receiver's ACK is deliberately delayed. Captures and counters confirm correct PSN tracking, ACK aggregation, feedback rewriting and ICRC validity. No unexpected QP errors, stalls or buffer leaks occur during a sustained loss-free run.
 
-- Parse a restricted initial format: Ethernet II, IPv4 without options, UDP and RC SEND. Explicitly reject unsupported or truncated packets.
-- Rewrite the configured destination QPN and recompute the full ICRC before ETH TX.
-- Test header offsets, QPN bounds, SEND extension headers, padding and ICRC against an independent oracle.
+### Milestone 5 — NACK handling and reliable RC retransmission
 
-**Done when:** Captures show only the intended rewrite and new ICRC; independent verification agrees. A correctly configured single receiver accepts the packet and the RC SEND completes with a documented ACK return path. QP setup remains Node A's responsibility.
+- Extend the reliability manager to process receiver-generated RC NACK packets and support packet-loss recovery using the sender RNIC's native retransmission mechanism.
+- Implement Cepheus's NACK aggregation algorithm:
+  - Extract the receiver's expected PSN (`ePSN`) from an incoming sequence-error NACK.
+  - Maintain `MePSN`, the minimum outstanding NACK `ePSN` across the multicast group.
+  - Ensure a NACK does not implicitly acknowledge packets still missing at another receiver.
+  - Forward `NACK(MePSN)` only when the group-wide acknowledgment frontier reaches the preceding PSN:
 
-**Status: COMPLETE (2026-10-27).** Independent IPv4 and IPv6 wire oracles agree,
-and `tools/rc_qpn_rewrite_test.c` proved transport acceptance with live
-ConnectX RC QPs. The sender targeted virtual QPN `1006`; Node B rewrote it to
-receiver QPN `1005`. The receiver CQE reported success with the expected
-40-byte payload, and the sender CQE completed only after the ACK traversed the
-unchanged reverse path. Runtime QPNs are ephemeral and must be regenerated.
+    \[
+    \min_i(\text{AckPSN}[i]) = \text{MePSN} - 1
+    \]
 
-### Milestone 3 — File-configured groups and fan-out
+  - Invalidate the pending `MePSN` after forwarding the NACK, following Cepheus's algorithm.
+- Allow the sender RNIC to perform RC retransmission; Node B does not implement a separate retransmission engine.
+- Implement retransmission filtering based on per-receiver acknowledgment progress. For a retransmitted packet with PSN `p`, forward it only to receivers satisfying:
 
-- Load a group file at startup, mapping an incoming destination IPv4/QPN pair to a list of destination members.
-- Create an independent writable packet per member; apply its destination MAC/IP/QPN, update affected checksums and recompute ICRC, then submit through the worker's ETH TX context.
-- Validate the entire file before starting workers. Keep the table immutable while running; edit the file and restart to apply changes.
-- Track per-member TX completions/errors and replication drops. Measure packet rate, goodput and drops with eight workers under a recorded workload.
+  \[
+  p > \text{AckPSN}[i]
+  \]
 
-**Done when:** A two-member group produces exactly two correctly addressed, independently checksum-verified wire packets per input under a no-loss test load. Unknown groups are counted and dropped; invalid configuration prevents startup; TX pressure is handled without shared-buffer corruption or leaks. Record receiver observations separately: packet fan-out alone does not demonstrate reliable multicast RC completion.
+- Test controlled packet loss affecting one receiver and multiple receivers with different missing PSNs.
+- Validate the interaction between ACK aggregation, pending NACKs, sender retransmission, and subsequent ACK advancement.
+- Track NACKs received/forwarded/suppressed, retransmitted packets, per-receiver recovery progress and completion latency.
+
+**Done when:** Under controlled packet loss, the sender RNIC receives valid aggregated NACK feedback and performs native RC retransmission. Every receiver eventually obtains the expected payloads, and all corresponding RC operations complete successfully. Different receivers losing different PSNs must not cause NACK inter-covering or premature sender completion. Packet captures and counters confirm correct NACK ordering, retransmission filtering and eventual ACK advancement, without unexpected QP errors or persistent stalls.
+
+**Reference:** Cepheus: Accelerating Datacenter Applications with High-Performance RoCE-Capable Multicast (HPCA 2024), Sections III-B and III-D.
 
 ## 8. Proposed source layout and group control
 
@@ -336,9 +353,10 @@ checkout is `/home/mtchang/Open-Hackathon/icrc`. On 2026-10-27:
 
 This validates startup, bidirectional physical forwarding, exact preservation,
 all eight RSS queues, two-member wire rewrite/ICRC correctness, receiver-QP
-acceptance, RC SEND completion, ACK return and cleanup. Milestone 2 is complete.
-The remaining milestone work is the recorded sustained-load behavior and
-throughput required by Milestone 3.
+acceptance, RC SEND completion, ACK return and cleanup. Milestones 2 and 3 are
+complete for their stated packet-processing scope. The Milestone 3 rate is a
+recorded Python-generator-limited workload, not a line-rate capacity claim;
+reliable multicast RC completion remains out of scope.
 
 ### IPv6 hardware path
 

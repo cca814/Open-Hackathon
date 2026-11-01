@@ -14,6 +14,7 @@ struct flow {
     unsigned processed;
     bool failed;
 };
+
 /* One global Flow engine for both ingress DPDK and egress ETH TX.
  * Caller must first establish the SDK-supported DPDK/device mapping. */
 doca_error_t flow_init(void);

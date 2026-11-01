@@ -188,6 +188,8 @@ def capture(args):
         for index, member in enumerate(args.member):
             frame = rewrite_expected(incoming, member)
             expected[hashlib.sha256(frame).digest()] = (index, sequence, frame)
+    print(json.dumps({"event": "capture_ready", "expected": len(expected),
+                      "members": len(args.member)}), flush=True)
     deadline = time.monotonic() + args.timeout
     observed = {}
     while len(observed) < len(expected):

@@ -6,12 +6,14 @@ bridge_sender=${BRIDGE_SENDER:-ovsbr1}
 bridge_receiver=${BRIDGE_RECEIVER:-ovsbr2}
 sender_rep=${SENDER_REP:-en3f0pf0sf0}
 receiver_rep0=${RECEIVER_REP0:-en3f1pf1sf0}
-receiver_rep1=${RECEIVER_REP1:-en3f1pf1sf1}
 sender_mac=${SENDER_MAC:-02:96:42:f8:5e:f2}
 receiver_mac0=${RECEIVER_MAC0:-02:7e:6d:fd:79:7c}
-receiver_mac1=${RECEIVER_MAC1:-02:7e:6d:fd:79:01}
 physical_sender=${PHYSICAL_SENDER:-p0}
 physical_receiver=${PHYSICAL_RECEIVER:-p1}
+sender_interface=${SENDER_INTERFACE:-enp3s0f0s0}
+receiver_interface=${RECEIVER_INTERFACE:-enp3s0f1s0}
+sender_cidr=${SENDER_CIDR:-10.0.1.1/24}
+receiver_cidr=${RECEIVER_CIDR:-10.0.2.1/24}
 cookie=0x49435243
 
 action=${1:-}
@@ -43,6 +45,14 @@ if [ "$(ovs-vsctl get Open_vSwitch . other_config:hw-offload)" != '"true"' ]; th
     exit 1
 fi
 
+# The IPv4 RoCE GIDs are derived from these SF netdev addresses. Configure the
+# one sender SF and the one receiver SF used by every destination QP before
+# programming the OVS path. Multiple receiver QPs do not require more SFs.
+ip link set dev "$sender_interface" up
+ip link set dev "$receiver_interface" up
+ip address replace "$sender_cidr" dev "$sender_interface"
+ip address replace "$receiver_cidr" dev "$receiver_interface"
+
 ofport()
 {
     value=$(ovs-vsctl get Interface "$1" ofport)
@@ -58,7 +68,6 @@ ofport()
 
 sender_rep_port=$(ofport "$sender_rep")
 receiver_rep0_port=$(ofport "$receiver_rep0")
-receiver_rep1_port=$(ofport "$receiver_rep1")
 p0_port=$(ofport "$physical_sender")
 p1_port=$(ofport "$physical_receiver")
 
@@ -72,14 +81,11 @@ ovs-ofctl -O OpenFlow13 add-flow "$bridge_sender" \
     "cookie=$cookie,priority=200,in_port=$sender_rep_port,actions=output:$p0_port"
 ovs-ofctl -O OpenFlow13 add-flow "$bridge_receiver" \
     "cookie=$cookie,priority=200,in_port=$p1_port,dl_dst=$receiver_mac0,actions=output:$receiver_rep0_port"
-ovs-ofctl -O OpenFlow13 add-flow "$bridge_receiver" \
-    "cookie=$cookie,priority=200,in_port=$p1_port,dl_dst=$receiver_mac1,actions=output:$receiver_rep1_port"
 
-# RC ACK return: either receiver SF -> p1, then p0 -> the sender SF.
+# RC ACK return: the receiver SF -> p1, then p0 -> the sender SF. Multiple
+# receiver QPs share this SF and are selected by their rewritten destination QPN.
 ovs-ofctl -O OpenFlow13 add-flow "$bridge_receiver" \
     "cookie=$cookie,priority=200,in_port=$receiver_rep0_port,actions=output:$p1_port"
-ovs-ofctl -O OpenFlow13 add-flow "$bridge_receiver" \
-    "cookie=$cookie,priority=200,in_port=$receiver_rep1_port,actions=output:$p1_port"
 ovs-ofctl -O OpenFlow13 add-flow "$bridge_sender" \
     "cookie=$cookie,priority=200,in_port=$p0_port,dl_dst=$sender_mac,actions=output:$sender_rep_port"
 

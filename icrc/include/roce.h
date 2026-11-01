@@ -11,16 +11,24 @@ struct roce_address {
 };
 struct roce_packet {
     size_t ip, udp, bth, icrc, end;
+    struct roce_address source;
     struct roce_address destination;
-    uint32_t dst_qpn;
+    uint32_t dst_qpn, psn;
+    uint8_t opcode, aeth_syndrome;
 };
 struct roce_destination {
     uint8_t mac[6];
     struct roce_address address;
     uint32_t qpn;
 };
+struct roce_timing {
+    uint64_t (*read_ticks)(void *context);
+    void *context;
+    uint64_t icrc_ticks;
+    int measured;
+};
 /* Ethernet II, IPv4 without options/fragments or IPv6 without extension
- * headers/jumbograms, UDP/4791, RC SEND 0..5.
+ * headers/jumbograms, UDP/4791, RC SEND 0..5 or RC ACKNOWLEDGE 0x11.
  * Length excludes Ethernet FCS; trailing Ethernet pad is not part of ICRC.
  * Output stays unchanged on failure. Structural validation, not RC state. */
 int roce_parse(const uint8_t *frame, size_t length, struct roce_packet *packet);
@@ -29,4 +37,23 @@ int roce_check_icrc(const uint8_t *frame, size_t length);
  * Updates destination MAC/IP/QPN, IPv4 checksum when present, full ICRC and
  * UDP checksum. An absent IPv4 checksum stays zero; IPv6 UDP is mandatory. */
 int roce_rewrite(uint8_t *frame, size_t length, const struct roce_destination *dst);
+/* As above, and rewrites the 24-bit BTH PSN before recalculating integrity
+ * fields. Used for per-receiver SEND PSN translation and sender-facing ACKs. */
+int roce_rewrite_psn(uint8_t *frame, size_t length,
+                     const struct roce_destination *dst, uint32_t psn);
+int roce_rewrite_psn_timed(uint8_t *frame, size_t length,
+                           const struct roce_destination *dst, uint32_t psn,
+                           struct roce_timing *timing);
+/* Sender-facing ACK rewrite. source supplies the virtual peer MAC/IP; its QPN
+ * is ignored because RC ACK packets carry only the destination QPN. */
+int roce_rewrite_ack(uint8_t *frame, size_t length,
+                     const struct roce_destination *dst,
+                     const struct roce_destination *source, uint32_t psn);
+int roce_rewrite_ack_timed(uint8_t *frame, size_t length,
+                           const struct roce_destination *dst,
+                           const struct roce_destination *source, uint32_t psn,
+                           struct roce_timing *timing);
+int roce_rewrite_timed(uint8_t *frame, size_t length,
+                       const struct roce_destination *dst,
+                       struct roce_timing *timing);
 #endif

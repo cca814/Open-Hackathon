@@ -21,12 +21,15 @@ class Address(C.Structure):
     _fields_ = [('family', C.c_uint8), ('bytes', C.c_uint8 * 16)]
 class Parsed(C.Structure):
     _fields_ = ([(n, C.c_size_t) for n in ('ip', 'udp', 'bth', 'icrc', 'end')] +
-                [('destination', Address), ('dst_qpn', C.c_uint32)])
+                [('source', Address), ('destination', Address),
+                 ('dst_qpn', C.c_uint32), ('psn', C.c_uint32),
+                 ('opcode', C.c_uint8), ('aeth_syndrome', C.c_uint8)])
 class Destination(C.Structure):
     _fields_ = [('mac', C.c_uint8 * 6), ('address', Address), ('qpn', C.c_uint32)]
 for name in ('roce_parse', 'roce_rewrite'):
     getattr(lib, name).argtypes = [C.c_void_p, C.c_size_t, C.c_void_p]
 lib.roce_check_icrc.argtypes = [C.c_void_p, C.c_size_t]
+lib.roce_rewrite_psn.argtypes = [C.c_void_p, C.c_size_t, C.c_void_p, C.c_uint32]
 
 def checksum(data):
     if len(data) % 2: data += b'\0'
@@ -249,5 +252,67 @@ class GroupTests(unittest.TestCase):
             self.assertEqual(out[30:34], (0xc0000201 + i).to_bytes(4, 'big'))
             self.assertEqual(out[-4:], icrc(out)); self.assertEqual(udp_checksum(out), 0)
             self.assertEqual(checksum(out[14:34]), 0)
+
+    def test_reliable_schema_and_forward_psn_translation(self):
+        reliable = copy.deepcopy(self.config)
+        group = reliable['groups'][0]
+        group['match']['initial_psn'] = 0x010203
+        group['sender'] = {
+            'dst_mac': '02:00:00:00:00:10',
+            'dst_ipv4': '192.0.2.10',
+            'dst_qpn': 500,
+        }
+        group['ack_source'] = {
+            'src_mac': '02:00:00:00:01:00',
+            'src_ipv4': '192.0.2.100',
+        }
+        group['members'][0]['initial_psn'] = 10
+        group['members'][1]['initial_psn'] = 20
+        self.check(reliable, True)
+        frame = make_frame(opcode=4, payload_size=32, udp=True)
+        incoming = Path(self.tmp.name) / 'reliable-input.bin'
+        outgoing = Path(self.tmp.name) / 'reliable-output.bin'
+        incoming.write_bytes(frame)
+        subprocess.run([FANOUT, str(self.path), str(incoming), str(outgoing)], check=True)
+        raw = outgoing.read_bytes()
+        for index, expected in enumerate((10, 20)):
+            output = raw[index * len(frame):(index + 1) * len(frame)]
+            self.assertEqual(int.from_bytes(output[51:54], 'big'), expected)
+            self.assertEqual(lib.roce_check_icrc(buffer(output), len(output)), 0)
+
+        same_interface = copy.deepcopy(reliable)
+        same_group = same_interface['groups'][0]
+        same_group['members'][1]['dst_ipv4'] = same_group['members'][0]['dst_ipv4']
+        same_group['members'][1]['dst_mac'] = same_group['members'][0]['dst_mac']
+        same_group['members'][1]['initial_psn'] = 0x100000
+        self.check(same_interface, True)
+
+        five_qp = copy.deepcopy(reliable)
+        template = five_qp['groups'][0]['members'][0]
+        five_qp['groups'][0]['members'] = [
+            dict(template, dst_qpn=101 + index,
+                 initial_psn=(index + 1) * 0x200000)
+            for index in range(5)
+        ]
+        self.check(five_qp, True)
+
+        for mutation in ('sender', 'ack_source', 'match_psn', 'member_psn',
+                         'single_member', 'overlapping_psn', 'best_effort_psn'):
+            bad = copy.deepcopy(reliable)
+            g = bad['groups'][0]
+            if mutation == 'sender': del g['sender']
+            elif mutation == 'ack_source': del g['ack_source']
+            elif mutation == 'match_psn': del g['match']['initial_psn']
+            elif mutation == 'member_psn': del g['members'][0]['initial_psn']
+            elif mutation == 'single_member': g['members'].pop()
+            elif mutation == 'overlapping_psn':
+                g['members'][1]['dst_ipv4'] = g['members'][0]['dst_ipv4']
+                g['members'][1]['initial_psn'] = g['members'][0]['initial_psn'] + 1
+            elif mutation == 'best_effort_psn':
+                del g['sender']
+                del g['ack_source']
+                del g['members'][0]['initial_psn']
+                del g['members'][1]['initial_psn']
+            self.check(bad, False)
 
 if __name__ == '__main__': unittest.main()

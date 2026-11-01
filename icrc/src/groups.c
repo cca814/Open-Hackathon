@@ -75,7 +75,30 @@ static int mac(struct parser *p, uint8_t *bytes)
     }
     return 0;
 }
-static int endpoint(struct parser *p, struct roce_destination *dst, int member)
+static int source_endpoint(struct parser *p, struct roce_destination *source)
+{
+    if (take(p, '{')) return -1;
+    unsigned seen = 0;
+    for (;;) {
+        char key[32]; unsigned bit;
+        if (string(p, key, sizeof(key)) || take(p, ':')) return -1;
+        if (!strcmp(key, "src_ipv4")) {
+            bit = 1; if (address(p, ROCE_IPV4, &source->address)) return -1;
+        } else if (!strcmp(key, "src_ipv6")) {
+            bit = 1; if (address(p, ROCE_IPV6, &source->address)) return -1;
+        } else if (!strcmp(key, "src_mac")) {
+            bit = 2; if (mac(p, source->mac)) return -1;
+        } else return -1;
+        if (seen & bit) return -1;
+        seen |= bit;
+        whitespace(p);
+        if (*p->p == '}') { ++p->p; break; }
+        if (take(p, ',')) return -1;
+    }
+    return seen == 3u ? 0 : -1;
+}
+static int endpoint(struct parser *p, struct roce_destination *dst, int member,
+                    uint32_t *initial_psn, bool *initial_set)
 {
     if (take(p, '{')) return -1;
     unsigned seen = 0;
@@ -86,6 +109,10 @@ static int endpoint(struct parser *p, struct roce_destination *dst, int member)
         else if (!strcmp(key, "dst_ipv6")) { bit = 1; if (address(p, ROCE_IPV6, &dst->address)) return -1; }
         else if (!strcmp(key, "dst_qpn")) { bit = 2; if (number(p, &dst->qpn)) return -1; }
         else if (member && !strcmp(key, "dst_mac")) { bit = 4; if (mac(p, dst->mac)) return -1; }
+        else if (initial_psn && !strcmp(key, "initial_psn")) {
+            bit = 8; if (number(p, initial_psn)) return -1;
+            *initial_set = true;
+        }
         else return -1;
         if (seen & bit) return -1;
         seen |= bit;
@@ -93,7 +120,8 @@ static int endpoint(struct parser *p, struct roce_destination *dst, int member)
         if (*p->p == '}') { ++p->p; break; }
         if (take(p, ',')) return -1;
     }
-    return seen == (member ? 7u : 3u) ? 0 : -1;
+    unsigned required = member ? 7u : 3u;
+    return (seen & required) == required && (seen & ~(required | 8u)) == 0 ? 0 : -1;
 }
 static int members(struct parser *p, struct groups *table, struct multicast_group *group)
 {
@@ -102,13 +130,18 @@ static int members(struct parser *p, struct groups *table, struct multicast_grou
     for (;;) {
         if (group->member_count == GROUP_MEMBERS_MAX || table->member_count == MEMBERS_MAX) return -1;
         struct roce_destination dst = {0};
-        if (endpoint(p, &dst, 1)) return -1;
+        uint32_t initial_psn = 0;
+        bool initial_set = false;
+        if (endpoint(p, &dst, 1, &initial_psn, &initial_set)) return -1;
         for (size_t i = group->first_member; i < table->member_count; ++i) {
             const struct roce_destination *other = &table->member[i];
             if (address_equal(&other->address, &dst.address) && other->qpn == dst.qpn &&
                 !memcmp(other->mac, dst.mac, 6)) return -1;
         }
-        table->member[table->member_count++] = dst;
+        table->member[table->member_count] = dst;
+        table->member_initial_psn[table->member_count] = initial_psn;
+        table->member_initial_set[table->member_count] = initial_set;
+        ++table->member_count;
         ++group->member_count;
         whitespace(p);
         if (*p->p == ']') { ++p->p; return 0; }
@@ -120,6 +153,7 @@ static int group(struct parser *p, struct groups *table)
     if (take(p, '{') || table->count == GROUPS_MAX) return -1;
     struct multicast_group *g = &table->group[table->count];
     unsigned seen = 0;
+    bool match_initial_set = false;
     for (;;) {
         char key[32]; unsigned bit;
         if (string(p, key, sizeof(key)) || take(p, ':')) return -1;
@@ -128,10 +162,17 @@ static int group(struct parser *p, struct groups *table)
             if (string(p, g->id, sizeof(g->id)) || !g->id[0]) return -1;
         } else if (!strcmp(key, "match")) {
             bit = 2; struct roce_destination match = {0};
-            if (endpoint(p, &match, 0)) return -1;
+            if (endpoint(p, &match, 0, &g->sender_initial_psn, &match_initial_set)) return -1;
             g->destination = match.address; g->dst_qpn = match.qpn;
         } else if (!strcmp(key, "members")) {
             bit = 4; if (seen & bit || members(p, table, g)) return -1;
+        } else if (!strcmp(key, "sender")) {
+            bit = 8;
+            if (endpoint(p, &g->sender, 1, NULL, NULL)) return -1;
+            g->reliable = true;
+        } else if (!strcmp(key, "ack_source")) {
+            bit = 16;
+            if (source_endpoint(p, &g->ack_source)) return -1;
         } else return -1;
         if (seen & bit) return -1;
         seen |= bit;
@@ -139,16 +180,86 @@ static int group(struct parser *p, struct groups *table)
         if (*p->p == '}') { ++p->p; break; }
         if (take(p, ',')) return -1;
     }
-    if (seen != 7) return -1;
+    if ((seen & 7u) != 7u || (seen & ~31u) != 0) return -1;
     for (size_t i = g->first_member; i < g->first_member + g->member_count; ++i)
         if (table->member[i].address.family != g->destination.family)
             return -1;
+    if (g->reliable) {
+        if (!(seen & 16u) || !match_initial_set || g->member_count < 2 ||
+            g->sender.address.family != g->destination.family ||
+            g->ack_source.address.family != g->destination.family)
+            return -1;
+        for (size_t i = g->first_member; i < g->first_member + g->member_count; ++i)
+            if (!table->member_initial_set[i])
+                return -1;
+        /* ACK packets omit the receiver QPN. Members sharing an address are
+         * disambiguated by their translated PSN domains. Keep those domains
+         * farther apart than two bounded outstanding windows. */
+        for (size_t i = g->first_member; i < g->first_member + g->member_count; ++i)
+            for (size_t j = i + 1; j < g->first_member + g->member_count; ++j)
+                if (address_equal(&table->member[i].address,
+                                  &table->member[j].address)) {
+                    uint32_t distance = (table->member_initial_psn[i] -
+                                         table->member_initial_psn[j]) & 0xffffffu;
+                    uint32_t reverse = (0x1000000u - distance) & 0xffffffu;
+                    if (reverse < distance)
+                        distance = reverse;
+                    if (distance <= 2u * RELIABLE_ACK_WINDOW)
+                        return -1;
+                }
+    } else {
+        if ((seen & 16u) || match_initial_set)
+            return -1;
+        for (size_t i = g->first_member; i < g->first_member + g->member_count; ++i)
+            if (table->member_initial_set[i])
+                return -1;
+    }
     for (size_t i = 0; i < table->count; ++i)
         if (!strcmp(g->id, table->group[i].id) ||
             (address_equal(&g->destination, &table->group[i].destination) &&
              g->dst_qpn == table->group[i].dst_qpn)) return -1;
+    if (g->reliable)
+        for (size_t i = 0; i < table->count; ++i) {
+            const struct multicast_group *other = &table->group[i];
+            if (!other->reliable || other->sender.qpn != g->sender.qpn ||
+                !address_equal(&other->sender.address, &g->sender.address))
+                continue;
+            for (size_t a = g->first_member; a < g->first_member + g->member_count; ++a)
+                for (size_t b = other->first_member;
+                     b < other->first_member + other->member_count; ++b)
+                    if (address_equal(&table->member[a].address,
+                                      &table->member[b].address))
+                        return -1;
+        }
     ++table->count;
     return 0;
+}
+
+const struct multicast_group *groups_find_feedback(const struct groups *table,
+                                                   const struct roce_address *source,
+                                                   const struct roce_address *destination,
+                                                   uint32_t sender_qpn,
+                                                   uint16_t *member_mask)
+{
+    if (!table || !source || !destination || !member_mask)
+        return NULL;
+    for (size_t g = 0; g < table->count; ++g) {
+        const struct multicast_group *group = &table->group[g];
+        if (!group->reliable || group->sender.qpn != sender_qpn ||
+            !address_equal(&group->sender.address, destination))
+            continue;
+        uint16_t mask = 0;
+        for (size_t i = 0; i < group->member_count; ++i) {
+            size_t absolute = group->first_member + i;
+            if (address_equal(&table->member[absolute].address, source))
+                mask |= (uint16_t)(1u << i);
+        }
+        if (mask) {
+            *member_mask = mask;
+            return group;
+        }
+    }
+    return NULL;
 }
 static int parse(struct parser *p, struct groups *table)
 {

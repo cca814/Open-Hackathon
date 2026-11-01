@@ -2,7 +2,10 @@ project('node-b-rocev2', 'c', version: '0.1.0',
   default_options: ['c_std=c11', 'warning_level=3', 'werror=true'])
 
 inc = include_directories('include')
-packet = library('node_b_packet', ['src/roce.c', 'src/icrc.c', 'src/groups.c'], include_directories: inc)
+packet = library('node_b_packet',
+  ['src/roce.c', 'src/icrc.c', 'src/groups.c', 'src/reliability.c',
+   'src/metrics.c'],
+  include_directories: inc)
 worker = static_library('node_b_worker', 'src/worker.c', include_directories: inc, link_with: packet)
 worker_test = executable('test_worker', 'tests/test_worker.c',
   include_directories: inc, link_with: worker, c_args: ['-UNDEBUG'])
@@ -41,3 +44,11 @@ test('packet-oracle-and-fanout', python,
 bounds_test = executable('test_roce_bounds', 'tests/test_roce_bounds.c',
   include_directories: inc, link_with: packet, c_args: ['-UNDEBUG'])
 test('packet-bounds', bounds_test)
+
+reliability_test = executable('test_reliability', 'tests/test_reliability.c',
+  include_directories: inc, link_with: [worker, packet], c_args: ['-UNDEBUG'])
+test('ack-aggregation', reliability_test)
+
+metrics_test = executable('test_metrics', ['tests/test_metrics.c', 'src/metrics.c'],
+  include_directories: inc, c_args: ['-UNDEBUG'])
+test('performance-metrics', metrics_test)

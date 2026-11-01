@@ -1,0 +1,2 @@
+{"event": "capture_ready", "expected": 16, "members": 2}
+{"event": "capture_complete", "count": 5, "expected": 16, "members": 2}

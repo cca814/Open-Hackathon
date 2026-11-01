@@ -30,6 +30,23 @@ int worker_set_groups(struct worker *w, const struct groups *groups)
     return 0;
 }
 
+int worker_set_reliability(struct worker *w, struct reliability *reliability)
+{
+    if (!w || !w->slots || w->stats.rx_packets || w->pending || w->stopping)
+        return -1;
+    w->reliability = reliability;
+    return 0;
+}
+
+int worker_set_clock(struct worker *w, struct worker_clock clock)
+{
+    if (!w || !w->slots || !clock.read_ticks || w->stats.rx_packets ||
+        w->pending || w->stopping)
+        return -1;
+    w->clock = clock;
+    return 0;
+}
+
 static struct worker_slot *acquire(struct worker *w, size_t length, size_t *index)
 {
     if (w->pending == w->slot_count) {
@@ -75,7 +92,8 @@ static int transmit(struct worker *w, size_t index, size_t length, size_t member
     return 0;
 }
 
-static int fanout(struct worker *w, const struct worker_rx *rx)
+static int fanout(struct worker *w, const struct worker_rx *rx,
+                  uint64_t ingress_ticks)
 {
     if (rx->length > sizeof(w->scratch)) {
         ++w->stats.drop_oversize;
@@ -102,26 +120,95 @@ static int fanout(struct worker *w, const struct worker_rx *rx)
         ++w->stats.drop_unknown_group;
         return 1;
     }
+    bool rtt_recorded = group->reliable && ingress_ticks && w->reliability &&
+        reliability_record_send(w->reliability, group, packet.psn,
+                                ingress_ticks) == 0;
     int result = 1;
+    bool all_submitted = true;
     for (size_t i = 0; i < group->member_count; ++i) {
         size_t member = group->first_member + i, index;
         struct worker_slot *slot = acquire(w, rx->length, &index);
         if (!slot) {
             ++w->members[member].drops;
+            all_submitted = false;
             continue;
         }
         memcpy(slot->data, w->scratch, rx->length);
-        if (roce_rewrite(slot->data, rx->length, &w->groups->member[member]) != ROCE_OK) {
+        int rewrite_status;
+        struct roce_timing timing = {
+            .read_ticks = w->clock.read_ticks,
+            .context = w->clock.context,
+        };
+        if (group->reliable) {
+            uint32_t offset = (packet.psn - group->sender_initial_psn) & ROCE_PSN_MASK;
+            uint32_t member_psn =
+                (w->groups->member_initial_psn[member] + offset) & ROCE_PSN_MASK;
+            rewrite_status = roce_rewrite_psn_timed(
+                slot->data, rx->length, &w->groups->member[member], member_psn,
+                &timing);
+        } else {
+            rewrite_status = roce_rewrite_timed(
+                slot->data, rx->length, &w->groups->member[member], &timing);
+        }
+        if (timing.measured)
+            metric_observe(&w->stats.icrc_compute, timing.icrc_ticks);
+        if (rewrite_status != ROCE_OK) {
             ++w->stats.drop_malformed;
             ++w->members[member].drops;
+            all_submitted = false;
             continue;
         }
         if (transmit(w, index, rx->length, member) == 0)
             result = 0;
-        else
+        else {
             ++w->members[member].drops;
+            all_submitted = false;
+        }
     }
+    if (rtt_recorded && !all_submitted)
+        reliability_cancel_send(w->reliability, group, packet.psn);
     return result;
+}
+
+static int feedback(struct worker *w, const struct worker_rx *rx, bool *handled)
+{
+    *handled = false;
+    if (rx->length > sizeof(w->scratch))
+        return 1;
+    if (rx->copy(rx->packet, w->scratch, rx->length) != 0) {
+        ++w->stats.drop_copy;
+        *handled = true;
+        return 1;
+    }
+    uint64_t ack_ticks = w->clock.read_ticks ? w->clock.read_ticks(w->clock.context) : 0;
+    struct roce_timing timing = {
+        .read_ticks = w->clock.read_ticks,
+        .context = w->clock.context,
+    };
+    enum reliability_result result = reliability_process_at(
+        w->reliability, w->scratch, rx->length, ack_ticks, &timing);
+    if (timing.measured)
+        metric_observe(&w->stats.icrc_compute, timing.icrc_ticks);
+    if (result == RELIABILITY_NOT_ACK)
+        return 1;
+    *handled = true;
+    if (result == RELIABILITY_SUPPRESS_ACK) {
+        ++w->stats.ack_suppressed;
+        return 1;
+    }
+    if (result == RELIABILITY_INVALID_ACK) {
+        ++w->stats.ack_invalid;
+        return 1;
+    }
+    size_t index;
+    struct worker_slot *slot = acquire(w, rx->length, &index);
+    if (!slot)
+        return 1;
+    memcpy(slot->data, w->scratch, rx->length);
+    if (transmit(w, index, rx->length, SIZE_MAX) != 0)
+        return 1;
+    ++w->stats.ack_forwarded;
+    return 0;
 }
 
 int worker_forward(struct worker *w, const struct worker_rx *rx)
@@ -134,8 +221,17 @@ int worker_forward(struct worker *w, const struct worker_rx *rx)
     if (w->stopping) {
         ++w->stats.drop_stopping;
     } else if (w->groups) {
-        result = fanout(w, rx);
+        uint64_t ingress_ticks = w->clock.read_ticks ?
+            w->clock.read_ticks(w->clock.context) : 0;
+        result = fanout(w, rx, ingress_ticks);
     } else {
+        bool handled = false;
+        if (w->reliability)
+            result = feedback(w, rx, &handled);
+        if (handled) {
+            rx->release(rx->packet);
+            return result;
+        }
         size_t index;
         struct worker_slot *slot = acquire(w, rx->length, &index);
         if (slot) {

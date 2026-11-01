@@ -35,6 +35,7 @@
 #include <string.h>
 #include <time.h>
 #include <rte_eal.h>
+#include <rte_cycles.h>
 #include <rte_ethdev.h>
 #include <rte_lcore.h>
 #include <rte_launch.h>
@@ -65,6 +66,28 @@ static uint64_t milliseconds(void)
     return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
+static uint64_t read_tsc(void *context)
+{
+    (void)context;
+    return rte_rdtsc();
+}
+
+static void print_metric(const char *name, const struct metric_summary *metric,
+                         uint64_t ticks_per_second)
+{
+    if (!metric->count)
+        return;
+    printf("metric=%s samples=%" PRIu64 " avg_ns=%" PRIu64
+           " min_ns=%" PRIu64 " p50_upper_ns=%" PRIu64
+           " p99_upper_ns=%" PRIu64 " max_ns=%" PRIu64 "\n",
+           name, metric->count,
+           metric_ticks_to_ns(metric->total / metric->count, ticks_per_second),
+           metric_ticks_to_ns(metric->minimum, ticks_per_second),
+           metric_ticks_to_ns(metric_percentile_upper(metric, 50), ticks_per_second),
+           metric_ticks_to_ns(metric_percentile_upper(metric, 99), ticks_per_second),
+           metric_ticks_to_ns(metric->maximum, ticks_per_second));
+}
+
 static int run_worker(void *argument)
 {
     struct runner *runner = argument;
@@ -90,7 +113,8 @@ static int run_worker(void *argument)
 }
 
 static void print_worker_stats(const char *direction, unsigned queue,
-                               const struct worker *worker, const struct groups *groups)
+                               const struct worker *worker, const struct groups *groups,
+                               uint64_t ticks_per_second)
 {
     const struct worker_stats *s = &worker->stats;
     printf("direction=%s queue=%u rx=%" PRIu64 " submitted=%" PRIu64
@@ -100,8 +124,17 @@ static void print_worker_stats(const char *direction, unsigned queue,
            s->drop_full + s->drop_copy + s->drop_oversize + s->drop_submit + s->drop_stopping,
            worker->pending);
     printf("direction=%s queue=%u malformed=%" PRIu64 " unsupported=%" PRIu64
-           " bad_icrc=%" PRIu64 " unknown_group=%" PRIu64 "\n", direction, queue,
-           s->drop_malformed, s->drop_unsupported, s->drop_icrc, s->drop_unknown_group);
+           " bad_icrc=%" PRIu64 " unknown_group=%" PRIu64
+           " ack_forwarded=%" PRIu64 " ack_suppressed=%" PRIu64
+           " ack_invalid=%" PRIu64 "\n", direction, queue,
+           s->drop_malformed, s->drop_unsupported, s->drop_icrc, s->drop_unknown_group,
+           s->ack_forwarded, s->ack_suppressed, s->ack_invalid);
+    if (s->icrc_compute.count) {
+        char metric_name[64];
+        snprintf(metric_name, sizeof(metric_name), "icrc_compute_%s_q%u",
+                 direction, queue);
+        print_metric(metric_name, &s->icrc_compute, ticks_per_second);
+    }
     if (!groups)
         return;
     for (size_t g = 0; g < groups->count; ++g) {
@@ -186,6 +219,8 @@ int main(int argc, char **argv)
         return 2;
     }
     struct groups *groups = NULL;
+    struct reliability reliability;
+    bool reliability_enabled = false;
     if (argc == 6) {
         char error[256];
         if (groups_load(argv[5], &groups, error, sizeof(error)) != 0) {
@@ -193,9 +228,38 @@ int main(int argc, char **argv)
             return 2;
         }
         printf("Loaded %zu groups / %zu members\n", groups->count, groups->member_count);
+        if (reliability_init(&reliability, groups) != 0) {
+            free(groups);
+            return 2;
+        }
+        reliability_enabled = true;
+        const char *delay = getenv("M4_ACK_DELAY");
+        if (delay) {
+            size_t member;
+            unsigned microseconds;
+            char trailing;
+            if (sscanf(delay, "%zu:%u%c", &member, &microseconds, &trailing) != 2 ||
+                reliability_set_test_delay(&reliability, member, microseconds) != 0) {
+                fprintf(stderr, "M4_ACK_DELAY must be MEMBER:MICROSECONDS\n");
+                reliability_destroy(&reliability);
+                free(groups);
+                return 2;
+            }
+            printf("Milestone 4 test delay: member=%zu microseconds=%u (first ACK only)\n",
+                   member, microseconds);
+        }
     }
     char *eal[] = {argv[0], "-l", argv[3], "-a", "00:0.0", NULL};
-    if (rte_eal_init(5, eal) < 0) { free(groups); return 1; }
+    if (rte_eal_init(5, eal) < 0) {
+        if (reliability_enabled) reliability_destroy(&reliability);
+        free(groups);
+        return 1;
+    }
+    uint64_t ticks_per_second = rte_get_tsc_hz();
+    const char *metrics_setting = getenv("NODE_B_METRICS");
+    bool metrics_enabled = !metrics_setting || strcmp(metrics_setting, "0") != 0;
+    printf("Metrics %s; tsc_hz=%" PRIu64 "\n",
+           metrics_enabled ? "enabled" : "disabled", ticks_per_second);
     struct doca_dev *devices[2] = {0};
     struct flow flows[2] = {0};
     uint16_t ports[2] = {UINT16_MAX, UINT16_MAX};
@@ -239,7 +303,8 @@ int main(int argc, char **argv)
         rx_started[i] = true;
     }
     /* Each lcore owns one RX/TX pair in each direction. Group rewriting is
-     * deliberately limited to port0 -> port1; RoCE ACKs return unchanged. */
+     * limited to port0 -> port1; matching reliable ACKs are aggregated in the
+     * reverse direction. TSC reads add no per-packet logging or allocation. */
     for (unsigned i = 0; i < NODE_B_WORKERS; ++i) {
         runners[i].forward_port = ports[0];
         runners[i].reverse_port = ports[1];
@@ -249,6 +314,17 @@ int main(int argc, char **argv)
             goto cleanup;
         DOCA_CHECK(eth_tx_open(devices[0], i, 256, 2048,
                               &runners[i].reverse, &runners[i].reverse_tx));
+        if (metrics_enabled) {
+            struct worker_clock clock = {read_tsc, NULL};
+            if (worker_set_clock(&runners[i].forward, clock) != 0 ||
+                worker_set_clock(&runners[i].reverse, clock) != 0)
+                goto cleanup;
+        }
+        if (reliability_enabled) {
+            if (worker_set_reliability(&runners[i].forward, &reliability) != 0 ||
+                worker_set_reliability(&runners[i].reverse, &reliability) != 0)
+                goto cleanup;
+        }
     }
     DOCA_CHECK(flow_init());
     flow_initialized = true;
@@ -263,7 +339,7 @@ int main(int argc, char **argv)
         if (rte_eal_remote_launch(run_worker, &runners[launched], cores[launched]) != 0)
             goto cleanup;
     }
-    puts("Eight bidirectional workers running; port0->port1 may rewrite, port1->port0 is unchanged.");
+    puts("Eight bidirectional workers running; forward traffic may rewrite/fan out; matching reverse ACKs aggregate.");
     while (!interrupted && !atomic_load(&stop_requested)) {
         struct timespec interval = {.tv_sec = 1};
         nanosleep(&interval, NULL);
@@ -277,9 +353,37 @@ cleanup:
     for (unsigned i = 0; i < NODE_B_WORKERS; ++i) {
         worker_stop(&runners[i].forward);
         worker_stop(&runners[i].reverse);
-        print_worker_stats("forward", i, &runners[i].forward, groups);
-        print_worker_stats("reverse", i, &runners[i].reverse, NULL);
+        print_worker_stats("forward", i, &runners[i].forward, groups,
+                           ticks_per_second);
+        print_worker_stats("reverse", i, &runners[i].reverse, NULL,
+                           ticks_per_second);
     }
+    struct metric_summary icrc_total = {0};
+    for (unsigned i = 0; i < NODE_B_WORKERS; ++i) {
+        metric_merge(&icrc_total, &runners[i].forward.stats.icrc_compute);
+        metric_merge(&icrc_total, &runners[i].reverse.stats.icrc_compute);
+    }
+    print_metric("icrc_compute_total", &icrc_total, ticks_per_second);
+    if (reliability_enabled)
+        for (size_t g = 0; g < groups->count; ++g) {
+            const struct multicast_group *group = &groups->group[g];
+            if (!group->reliable)
+                continue;
+            const struct reliability_group_state *state = &reliability.state[g];
+            printf("group=%s ack_received=%" PRIu64 " ack_forwarded=%" PRIu64
+                   " ack_suppressed=%" PRIu64 " ack_stale=%" PRIu64
+                   " ack_malformed=%" PRIu64 " ack_delayed=%" PRIu64
+                   " rtt_overwrites=%" PRIu64 " rtt_missed=%" PRIu64
+                   " agg_ack_psn=%u tri_port=%zu\n",
+                   group->id, state->counters.received, state->counters.forwarded,
+                   state->counters.suppressed, state->counters.stale,
+                   state->counters.malformed, state->counters.delayed,
+                   state->counters.rtt_overwrites, state->counters.rtt_missed,
+                   state->agg_ack_psn, state->tri_port);
+            char metric_name[96];
+            snprintf(metric_name, sizeof(metric_name), "traffic_rtt_group_%s", group->id);
+            print_metric(metric_name, &state->rtt, ticks_per_second);
+        }
     for (unsigned i = 0; i < 2; ++i) {
         if (flows[i].rss_entry[0] && flows[i].rss_entry[1]) {
             uint64_t packets, bytes;
@@ -327,6 +431,8 @@ cleanup:
             return 1;
     if (rte_eal_cleanup() < 0)
         return 1;
+    if (reliability_enabled)
+        reliability_destroy(&reliability);
     free(groups);
     return result;
 }

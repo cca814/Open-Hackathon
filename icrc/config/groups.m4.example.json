@@ -1,0 +1,35 @@
+{
+  "groups": [
+    {
+      "id": "reliable-ipv6-demo",
+      "match": {
+        "dst_ipv6": "2001:db8::100",
+        "dst_qpn": 9000,
+        "initial_psn": 100000
+      },
+      "sender": {
+        "dst_mac": "02:96:42:f8:5e:f2",
+        "dst_ipv6": "2001:db8::10",
+        "dst_qpn": 100
+      },
+      "ack_source": {
+        "src_mac": "02:00:00:00:01:00",
+        "src_ipv6": "2001:db8::100"
+      },
+      "members": [
+        {
+          "dst_mac": "02:7e:6d:fd:79:7c",
+          "dst_ipv6": "2001:db8::1",
+          "dst_qpn": 101,
+          "initial_psn": 200000
+        },
+        {
+          "dst_mac": "02:7e:6d:fd:79:01",
+          "dst_ipv6": "2001:db8::2",
+          "dst_qpn": 102,
+          "initial_psn": 300000
+        }
+      ]
+    }
+  ]
+}

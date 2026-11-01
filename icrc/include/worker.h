@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "groups.h"
+#include "metrics.h"
+#include "reliability.h"
 
 #define NODE_B_WORKERS 8u
 #define NODE_B_MAX_FRAME 2048u
@@ -35,6 +37,8 @@ struct worker_stats {
     uint64_t drop_full, drop_oversize, drop_copy, drop_submit, drop_stopping;
     uint64_t invalid_completions;
     uint64_t drop_malformed, drop_unsupported, drop_icrc, drop_unknown_group;
+    uint64_t ack_forwarded, ack_suppressed, ack_invalid;
+    struct metric_summary icrc_compute;
 };
 
 enum worker_submit_result {
@@ -58,6 +62,11 @@ struct worker_member_stats {
     uint64_t submitted, completed, errors, drops;
 };
 
+struct worker_clock {
+    uint64_t (*read_ticks)(void *context);
+    void *context;
+};
+
 struct worker {
     struct worker_slot *slots;
     size_t slot_count, next_slot, pending;
@@ -66,6 +75,8 @@ struct worker {
     struct worker_tx tx;
     struct worker_stats stats;
     const struct groups *groups; /* Immutable and alive until all workers drain. */
+    struct reliability *reliability; /* Shared, internally synchronized. */
+    struct worker_clock clock;
     uint8_t scratch[NODE_B_MAX_FRAME];
     struct worker_member_stats members[MEMBERS_MAX];
 };
@@ -77,6 +88,8 @@ int worker_init(struct worker *worker, unsigned queue_id,
                 struct worker_slot *slots, size_t count, struct worker_tx tx);
 /* Enable group rewrite before receiving packets; NULL keeps unchanged baseline. */
 int worker_set_groups(struct worker *worker, const struct groups *groups);
+int worker_set_reliability(struct worker *worker, struct reliability *reliability);
+int worker_set_clock(struct worker *worker, struct worker_clock clock);
 /* Returns 0 if any replica was submitted, 1 if all dropped, -1 for invalid arguments.
  * Fan-out is best effort: failed/full member submissions do not roll back others.
  * Valid RX descriptors are always released, including during shutdown. */

@@ -64,6 +64,23 @@ int dpdk_rx_poll(struct worker *worker, uint16_t port_id)
         struct worker_rx rx = {packets[i], rte_pktmbuf_pkt_len(packets[i]),
                                copy_packet, release_packet};
         (void)worker_forward(worker, &rx);
+        /* A single MTU-segmented RC message can fill an entire RX burst.  Each
+         * input packet may also create one TX task per multicast member, so
+         * waiting until the next RX poll to reap completions can exhaust a
+         * perfectly healthy TX slot ring within one burst (for example,
+         * 32 packets * 5 members > half of a 256-task queue).  Progress after
+         * every input packet keeps completion reclamation proportional to
+         * fan-out work without changing packet ordering or admission rules. */
+        int progress_status;
+        do {
+            progress_status = worker_progress(worker);
+        } while (progress_status == 0 &&
+                 worker->pending > worker->slot_count / 2);
+        if (progress_status != 0) {
+            for (uint16_t j = i + 1; j < count; ++j)
+                rte_pktmbuf_free(packets[j]);
+            return -1;
+        }
     }
     return count;
 }

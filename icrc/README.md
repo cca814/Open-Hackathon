@@ -7,9 +7,9 @@ DPUs run Ubuntu 24.04.4 LTS (`aarch64`). DOCA Common, Flow, ETH and the DPDK
 bridge report `3.5.0098`; installed DPDK metadata reports `26.03.0.5`.
 
 Target packet path: DOCA Flow → eight bidirectional DPDK workers → optional
-forward rewrite/full ICRC → DOCA ETH TX. Reverse UDP/4791 traffic is copied
-unchanged from port 1 to port 0 for the RC ACK return path. See
-[AGENTS.md](AGENTS.md) for the three milestones.
+forward rewrite/full ICRC → DOCA ETH TX. For reliable groups, reverse RC ACKs
+are aggregated and rewritten; other reverse UDP/4791 traffic remains unchanged.
+See [AGENTS.md](AGENTS.md) for the milestone definitions.
 
 ## Runtime connection
 
@@ -58,13 +58,14 @@ The Node B checkout used for validation is
 
 Module headers live in `include/`; implementations live in `src/`.
 
-The bidirectional forwarding, rewrite and file-configured fan-out source paths
-are implemented. The DOCA 3.5 hardware build, portable tests, queue
+The bidirectional forwarding, rewrite, file-configured fan-out and Milestone 4
+ACK-aggregation source paths are implemented. The DOCA 3.5 hardware build, portable tests, queue
 initialization and controlled physical-path tests pass on Node B. Tagged
 synthetic UDP/4791 traffic passed losslessly in both directions through all
 eight queues. Independently generated valid RC SEND frames were rewritten into
 two members and all 128 captured outputs matched an independent byte/checksum
-oracle. ConnectX endpoint acceptance remains pending. Implemented modules:
+oracle. Milestone 4's two-receiver ConnectX acceptance run remains pending.
+Implemented modules:
 
 The packet/configuration and live hardware paths support Ethernet II with
 either restricted IPv4 or IPv6. IPv6 RC SEND parsing, address-family-aware
@@ -82,9 +83,13 @@ wire tests on DOCA 3.5.0098.
   and drain on shutdown. Omitting `--groups` keeps unchanged forwarding.
 - `src/dpdk_rx.c`: burst polling, bounded multi-segment mbuf copying and release,
   and TX progress even when there are no incoming packets.
-- `src/roce.c` and `src/icrc.c`: bounded RC SEND parsing, destination rewriting,
-  full IPv4/IPv6 ICRC and IP/UDP checksum recomputation.
-- `src/groups.c`: startup JSON validation and immutable destination-group lookup.
+- `src/roce.c` and `src/icrc.c`: bounded RC SEND/ACK parsing, source/destination,
+  QPN and PSN rewriting, full IPv4/IPv6 ICRC and IP/UDP checksum recomputation.
+- `src/groups.c`: startup JSON validation and immutable forward/feedback lookup.
+- `src/reliability.c`: shared, synchronized 24-bit PSN tracking, Cepheus
+  minimum-frontier ACK aggregation and `triPort` suppression.
+- `src/metrics.c`: allocation-free summaries and logarithmic percentile
+  histograms for ICRC recomputation and reliable traffic RTT.
 - `src/eth_tx.c`: per-worker DOCA TX queue, progress engine, registered storage,
   buffer inventory, send tasks, completion callbacks and ordered cleanup.
 
@@ -116,8 +121,11 @@ It covers worker ownership and repeated buffer reuse; 400 synthetic frames acros
 RC SEND opcodes, padding, immediate data and varying payload lengths; independent
 Python zlib and Internet-checksum verification; malformed/truncated input and
 invalid group files; and two-member worker fan-out with queue exhaustion,
-submission failure, TX completion errors and unknown groups. These are software
-tests, not hardware acceptance or throughput measurements.
+submission failure, TX completion errors and unknown groups. Milestone 4 tests
+add reliable-schema rejection, per-member PSN translation, delayed/stale/
+reordered ACKs, one-shot delayed-feedback injection, reverse-worker integration,
+sender-facing ACK rewrite and 24-bit PSN wraparound. These are software tests,
+not hardware acceptance or throughput measurements.
 
 On the BlueField with matching SDK development packages, compile the adapters:
 
@@ -224,6 +232,10 @@ errors or drops. This closes the capture/oracle part of Milestone 2 and the
 two-member no-loss wire-replication part of Milestone 3; it does not close the
 receiver-QP/RC-completion or recorded sustained-load gates.
 
+The recorded eight-worker Milestone 3 workload, rates, per-queue counters,
+unknown-group rejection, invalid-startup test and capture limitation are in
+[the 2026-10-27 experiment report](reports/milestone-3-experiment-2026-10-27.md).
+
 The IPv6 equivalent uses `--src-ip 2001:db8::10 --dst-ip 2001:db8::100` and
 members `2001:db8::1` and `2001:db8::2`, with
 `config/groups.ipv6.example.json`. On 2026-10-27, 64 controlled inputs produced
@@ -289,6 +301,78 @@ proving the RC ACK returned through Node B. Node B recorded one forward member
 submission/completion and reverse submissions/completions with zero TX errors,
 drops or pending buffers. This completes Milestone 2.
 
+## Milestone 4 reliable RC fan-out
+
+Milestone 4 reliability is enabled only for groups using the strict schema in
+[`config/groups.m4.example.json`](config/groups.m4.example.json). Existing
+Milestone 2/3 files remain best-effort and backward-compatible. A reliable group
+adds:
+
+- `match.initial_psn`: the sender's first SEND PSN in the virtual connection.
+- `sender`: the real sender MAC/IP/QPN used as the aggregate ACK destination.
+- `ack_source`: the virtual peer MAC/IP that aggregate ACKs impersonate.
+- `members[*].initial_psn`: each receiver QP's expected first SEND PSN.
+
+The forward worker translates each sender-domain PSN into the member's PSN
+space before recalculating UDP checksum and ICRC. Receiver ACKs are identified
+by source IP plus sender-facing destination IP/QPN, translated back into the
+sender PSN space, and passed to shared group state. That state maintains
+`AckPSN[i]`, `AggAckPSN` and `tri_port` under an atomic lock used by all eight
+reverse workers. Duplicate, stale and reordered ACKs cannot regress the
+frontier. Only `min(AckPSN[i])` advancement produces output; every other ACK is
+suppressed. PSN comparison is wraparound-safe within RC's half-range window.
+Positive ACKs are rewritten with virtual source MAC/IP and real sender
+destination MAC/IP/QPN/PSN, followed by full checksum and ICRC recomputation.
+RNR/sequence NACK syndromes are withheld for Milestone 5.
+
+Portable validation:
+
+```sh
+./tests/run_local.sh
+cc -std=c11 -Wall -Wextra -Werror -pedantic -g \
+  -fsanitize=address,undefined -Iinclude \
+  src/worker.c src/roce.c src/icrc.c src/groups.c src/reliability.c src/metrics.c \
+  tests/test_reliability.c -o /tmp/icrc-test-reliability-sanitized
+/tmp/icrc-test-reliability-sanitized
+```
+
+The live acceptance gate uses two receiver QPs whose `rq_psn` values match the
+generated member initial PSNs, and one sender QP targeting the virtual QPN/GID.
+Generate a fresh runtime file from those live QPs, copy it to Node B, and launch
+with that file. For the deliberate delayed-receiver gate, set
+`M4_ACK_DELAY=1:500000` on Node B; this delays only the first ACK from member 1
+by 500 ms and is disabled by default. Pass criteria are:
+
+1. Both receiver CQs complete with identical payloads.
+2. The sender SEND CQ remains incomplete during the injected delay and completes
+   only after member 1's ACK reaches the aggregate frontier.
+3. Node B reports `ack_delayed=1`, an advancing `agg_ack_psn`, no malformed
+   positive ACKs, no TX errors, no pending buffers and member completion parity.
+4. A capture shows member-specific SEND QPN/PSN values and exactly the
+   sender-facing aggregate ACK address/QPN/PSN with valid UDP checksum and ICRC.
+5. A sustained loss-free run completes every receiver and sender CQE without QP
+   errors or stalls. Disable `M4_ACK_DELAY` for the sustained run.
+
+The portable gates pass in this checkout. The milestone is not a hardware pass
+until the live two-receiver run is executed on the BlueFields; no receiver-CQE
+or throughput result is inferred from software tests.
+
+The bounded IPv4 metric gate and single-receiver `ib_send_bw` Stage A were run
+on BlueField hardware on 2026-10-29. Results, including the loss-free
+burst-size-one run and the saturation/backpressure findings, are recorded in
+[`reports/milestone-4-ipv4-hardware-validation-2026-10-29.md`](reports/milestone-4-ipv4-hardware-validation-2026-10-29.md).
+
+### Performance metrics
+
+Hardware runs use the DPDK TSC without per-packet logging. Shutdown output
+reports ICRC recomputation samples and Node B SEND-ingress-to-aggregate-ACK-
+ingress RTT as count, average, minimum, logarithmic p50/p99 upper bounds, and
+maximum nanoseconds. RTT correlation uses a bounded 16,384-PSN ring per reliable
+group and explicitly reports missed and overwritten timestamps. Set
+`NODE_B_METRICS=0` for an instrumentation-overhead comparison. Definitions,
+validation gates, and the staged high-volume test plan are in
+[`reports/milestone-4-metrics-and-load-plan.md`](reports/milestone-4-metrics-and-load-plan.md).
+
 ## SDK source and integration contract
 
 API usage was derived from the user-provided `~/Capstone/doca-samples` tree,
@@ -347,11 +431,13 @@ and a sustained test on the BlueField.
 ## Group configuration and packet behavior
 
 Edit [config/groups.example.json](config/groups.example.json) with the destination
-MAC/IP/QPN of actual receiver QPs. Incoming `(destination IPv4, destination QPN)`
+MAC/IP/QPN of actual receiver QPs. Incoming `(destination IP, destination QPN)`
 selects one group. A single-member group provides ordinary QPN rewriting; use
 the original destination MAC and IP when only QPN should change. All outputs
-leave through the configured TX device. Source addresses, PSN, P_Key, payload,
-padding and immediate data remain unchanged.
+leave through the configured TX device. Best-effort groups preserve source
+addresses and PSN. Reliable groups translate PSN and rewrite aggregate ACK
+addressing as described above; P_Key, payload, padding and immediate data remain
+unchanged.
 
 Validate a file without hardware using `build-bf3/groups_check FILE` (or
 `build-local/groups_check FILE` after the local tests). Limits are 64 groups,
@@ -364,8 +450,8 @@ has no third-party JSON dependency.
 
 The worker accepts Ethernet II with either IPv4/IHL=5/unfragmented or IPv6 with
 no extension headers/jumbograms, followed by UDP/4791 RC SEND opcodes
-0x00–0x05. VLAN, IPv4 options/fragments, IPv6 extensions/fragments, ACKs and
-other opcodes are explicitly dropped. Group endpoints use exactly one of
+0x00–0x05 or RC ACKNOWLEDGE opcode `0x11`. VLAN, IPv4 options/fragments, IPv6
+extensions/fragments and other opcodes are explicitly dropped. Group endpoints use exactly one of
 `dst_ipv4` or `dst_ipv6`; all members must use the match key's address family.
 Input ICRC is always checked; corruption is counted and dropped rather than
 concealed by generating a new checksum. Input IP/UDP checksums are not
@@ -390,12 +476,11 @@ portable implementation uses full bitwise CRC recomputation; no line-rate claim
 is made. Synthetic zlib agreement is established; independent ConnectX captures
 and hardware acceptance remain required.
 
-Node A still owns QP setup and PSN/peer state. Node B now forwards UDP/4791
-traffic, including RC ACK packets, unchanged from port 1 to port 0 even while
-forward group rewriting is enabled. It does not aggregate multicast ACKs or
-alter QP state. A single-receiver test must still configure compatible peers and
-PSNs on Node A and observe actual SEND completion; correct fan-out packets alone
-do not establish reliable RC multicast.
+Node A still owns QP setup and PSN/peer state. Node B leaves reverse UDP/4791
+traffic unchanged for best-effort groups. For a reliable group, it aggregates
+matching positive RC ACKs and rewrites only a frontier-advancing ACK. Node B
+does not alter QP state. Correct packets and portable tests alone do not prove
+live reliable RC multicast; the two-receiver CQE gate above remains mandatory.
 
 ## Docker on the DPU
 
@@ -491,5 +576,7 @@ and full ICRC all agreed, while per-member submissions/completions were 64/64
 with zero errors or drops. The Node A OVS test additionally proved the sender
 SF-to-p0 route and exactly 64 outputs to each receiver SF representor. The live
 RC harness then proved QPN rewrite into an accepting ConnectX receiver and
-ACK-backed SEND completion. Milestone 2 is complete; sustained-load behavior
-and throughput remain open Milestone 3 gates.
+ACK-backed SEND completion. Milestone 2 is complete. The later recorded
+20,000-input workload completed 40,000 replicas with zero TX errors or drops,
+exercised all eight workers, and separately counted/dropped 256 unknown groups;
+see the Milestone 3 experiment report.
