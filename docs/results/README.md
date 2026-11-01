@@ -44,6 +44,24 @@ The same `relay busy` measurement with the test programs' limits taken out: does
 - Counts: 300000 messages up to 4 KB, 100000 for 16 KB, 30000 for 64 KB. The runs last 0.4 to 2.2 s. The 4 KB rate varies from 0.23 to 0.40 Mmsg/s across the three runs.
 - Compare with the 2026-10-25 table in `CLAUDE.md` (same programs but no `--busy`): 64 B to 1 KB (0.14 to 0.15 Mmsg/s), 16 KB (0.23) and 64 KB (0.059, 92.6 Gbps out) match it. 4 KB does not: 0.23, 0.31 and 0.40 here, 0.41 there. Whether `--busy` or run-to-run spread causes that is not known.
 
+## 2026-10-31-dpu-1flow.txt
+
+One flow with the three targets (three sinks, one QP each), 18 lines: 64 B, 256 B, 1 KB and 4 KB with 10 million messages, 16 KB and 64 KB with 100 thousand, 3 runs each. Written by `rdma/bench.sh --busy --latency -w 1 -d baseline_latency -o`, so each line has a timestamp.
+
+- Programs: the `baseline_latency` copy on the DPUs (`payload_fill` and `--verify` as byte-by-byte loops, `min_rnr_timer = 12`). The later `payload.h` uses `memcpy` / `memcmp`, so these lines are **not comparable** with `2026-11-01-dpu-flows.txt`, which was run with the new programs and 5 receivers per flow.
+- `window` is 1 and `--verify` is on (3/3 in every line). There is no `wire` column: `busy-check.sh` did not exist yet, and whether others were on the DPUs was checked only with `who` and the user's own processes.
+- Not in `CLAUDE.md` or the `.md` below; the 1-flow, 3-target matrix has not been run again with the new programs.
+
+## 2026-11-01-dpu-flows.txt
+
+Several flows, 5 receivers each: 54 lines written by `rdma/flows.sh -f {1,2,3} -R 5 -w 1 -r 3 -o` (flows 1, 2, 3 × 64 B, 256 B, 1 KB, 4 KB, 16 KB, 64 KB × 3 runs), each with a timestamp. `2026-11-01-dpu-flows.md` has the tables made from it (`rdma/make_tables.py 2026-11-01-dpu-flows.txt` prints them again) and what they show.
+
+- Programs and layout: see the first paragraph of the `.md`. `sink --receivers 5`, `payload.h` with `memcpy` / `memcmp`; these are not the programs of the other files here, so the numbers are not comparable with them.
+- `window` is 1: stop-and-wait to the relay's NIC, not to the receivers. `latency` is from the source's post to a receiver's poll; the figures are the lowest and highest over all receivers of all flows. `wire` is the port byte counters over what the run should send, from `busy-check.sh`.
+- 10 million messages for 64 B to 4 KB, 100 thousand for 16 KB and 64 KB.
+- `busy-check.sh` found no one else on the DPUs before each of the three calls; a root `ipmi_sim` on DPU1 used about 47% of a core before the 3-flow call.
+- 10.0.2.1 had disappeared from DPU1's `enp3s0f1s0` between 2026-10-31 evening and this run, from no known cause; `dpu-net.sh dpu1 up flows` put it back before the first run.
+
 ## What is not here
 
 Some numbers in `CLAUDE.md` were read from the console and not saved as files: the runs without `--verify`, the `--pool` and `--window` combinations, the copies with a smaller `min_rnr_timer` or a header-only `payload_fill`, the `ib_send_bw` reference and the RNR counters. Treat them as less well backed than the sweep above.
