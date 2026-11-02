@@ -1,4 +1,4 @@
-# Milestone 4 IPv4 ten-million-packet payload sweep — 2026-10-31
+# Milestone 4 IPv4 ten-million-packet payload sweep
 
 ## Scope and pass criteria
 
@@ -107,62 +107,6 @@ not loss-free datapath passes:
 The excess input matches and ICRC samples are RC retry amplification. Their
 throughput and RTT values describe the requested unpaced overloaded behavior;
 they must not be presented as loss-free capacity.
-
-## Defects found and implementation change
-
-The initial 64 KiB window-1 attempt failed on its first SEND. Node B received
-946 retry-amplified data packets, submitted 3,874 member copies, and dropped
-856 copies asymmetrically. A first fix that called `doca_pe_progress()` after
-every received packet advanced to message 50,580 but still accumulated
-2,476,864 asymmetric replica drops before transport retry exhaustion.
-
-The root cause was completion-service cadence. `dpdk_rx_poll()` dequeued up to
-32 input packets, while each input could create five DOCA ETH TX tasks. The
-worker had 256 TX slots, and the old loop progressed completions only before
-the RX burst. A sustained 64-segment train could therefore consume slots faster
-than callbacks reclaimed them.
-
-`src/dpdk_rx.c` now:
-
-1. progresses DOCA ETH TX after every processed RX packet;
-2. keeps progressing while more than half of the worker's TX slots remain
-   occupied;
-3. releases every unprocessed mbuf from the current RX burst if progress
-   reports an error.
-
-This is completion-driven backpressure, not traffic pacing. It preserves TX
-buffer ownership until DOCA completion, leaves at least half the ring as burst
-headroom, and allowed the final unpaced 64 KiB workload to complete with zero
-drops.
-
-## Validation performed
-
-- `./tests/run_local.sh` passed after the harness extension and after each RX
-  completion/backpressure change.
-- The final Arm image compiled against DOCA 3.5.0098 and DPDK 26.03.0.5.
-- All eight Meson tests inside the hardware image passed.
-- Runtime group validation reported `1 groups, 5 members` for every fresh-QP
-  run.
-- Node B used physical ports `03:00.0` and `03:00.1`, DPDK ports 2 and 3,
-  eight workers, and the existing IPv4 UDP/4791 DOCA Flow steering path.
-- Node B was stopped cleanly after every measurement; final runs had no pending
-  DOCA TX buffers.
-
-## Reproduction command
-
-After creating the live QPs and copying the generated group JSON to Node B,
-each payload point used:
-
-```text
-./build-local/m4_rc_ramp \
-  config/groups.m4.5qp.ipv4.runtime.json \
-  1 1 PAYLOAD_BYTES WINDOW 10000000
-```
-
-The two `1` arguments remain syntactically required rate-list and duration
-fields, but fixed-wire-packet mode is selected by the final argument and does
-not invoke the rate pacer. The terminal record explicitly reports
-`mode=unpaced`, `wire_packets=10000000`, and `segments_per_message`.
 
 ## Conclusion
 
