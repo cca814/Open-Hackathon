@@ -11,6 +11,7 @@
 
 int send_connection_data(int fd, const void *data, size_t len);
 int receive_connection_data(int fd, void *data, size_t len);
+int listen_server(const char *port);
 int bind_server(const char *port);
 int connect_server(const char *host, const char *port);
 
