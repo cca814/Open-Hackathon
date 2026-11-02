@@ -42,6 +42,12 @@ services:
       - "${LCORES:?Set LCORES to nine available DPU CPU cores}"
       - --groups
       - /etc/node-b/groups.json
+    environment:
+      # dpdk-neon is the default. incremental-verify checks every correction
+      # against the full backend; incremental is gated on successful validation.
+      NODE_B_ICRC_BACKEND: ${NODE_B_ICRC_BACKEND:-dpdk-neon}
+      # IPv4 permits zero to mean no UDP checksum. IPv6 always remains enabled.
+      NODE_B_IPV4_UDP_CHECKSUM: ${NODE_B_IPV4_UDP_CHECKSUM:-1}
     # Main is PID 1 and receives SIGTERM directly; allow TX draining/cleanup.
     stop_grace_period: 60s
     restart: "no"

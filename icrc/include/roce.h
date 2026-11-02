@@ -3,6 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct icrc_backend;
+struct icrc_delta;
+
 enum roce_result { ROCE_OK, ROCE_MALFORMED, ROCE_UNSUPPORTED, ROCE_BAD_ICRC };
 enum roce_ip_family { ROCE_IPV4 = 4, ROCE_IPV6 = 6 };
 struct roce_address {
@@ -26,6 +29,9 @@ struct roce_timing {
     void *context;
     uint64_t icrc_ticks;
     int measured;
+    /* Benchmark option: IPv4 permits a zero UDP checksum. IPv6 ignores this
+     * flag because its UDP checksum remains mandatory. */
+    int disable_ipv4_udp_checksum;
 };
 /* Ethernet II, IPv4 without options/fragments or IPv6 without extension
  * headers/jumbograms, UDP/4791, RC SEND 0..5 or RC ACKNOWLEDGE 0x11.
@@ -33,6 +39,10 @@ struct roce_timing {
  * Output stays unchanged on failure. Structural validation, not RC state. */
 int roce_parse(const uint8_t *frame, size_t length, struct roce_packet *packet);
 int roce_check_icrc(const uint8_t *frame, size_t length);
+/* Hot-path variant for an already parsed, worker-owned mutable frame. */
+int roce_check_icrc_parsed(uint8_t *frame, size_t length,
+                           const struct roce_packet *packet,
+                           const struct icrc_backend *backend);
 /* Revalidates before mutation. The destination family must match the packet.
  * Updates destination MAC/IP/QPN, IPv4 checksum when present, full ICRC and
  * UDP checksum. An absent IPv4 checksum stays zero; IPv6 UDP is mandatory. */
@@ -56,4 +66,15 @@ int roce_rewrite_ack_timed(uint8_t *frame, size_t length,
 int roce_rewrite_timed(uint8_t *frame, size_t length,
                        const struct roce_destination *dst,
                        struct roce_timing *timing);
+/* Common hot-path rewrite for a previously parsed packet. source and psn are
+ * optional; backend NULL selects the portable reference implementation. */
+int roce_rewrite_parsed_timed(uint8_t *frame, size_t length,
+                              const struct roce_packet *packet,
+                              const struct roce_destination *dst,
+                              const struct roce_destination *source,
+                              const uint32_t *psn,
+                              const struct icrc_backend *backend,
+                              const struct icrc_delta *delta,
+                              int verify_delta,
+                              struct roce_timing *timing);
 #endif

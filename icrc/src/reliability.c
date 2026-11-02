@@ -189,10 +189,11 @@ static void retire_cumulatively_acked_stamps(
     }
 }
 
-enum reliability_result reliability_process_at(struct reliability *manager,
-                                                uint8_t *frame, size_t length,
-                                                uint64_t ack_ticks,
-                                                struct roce_timing *timing)
+enum reliability_result reliability_process_at_backend(
+    struct reliability *manager, uint8_t *frame, size_t length,
+    uint64_t ack_ticks, const struct icrc_backend *backend,
+    const struct icrc_delta *delta, int verify_delta,
+    struct roce_timing *timing)
 {
     if (!manager || !manager->groups || !frame)
         return RELIABILITY_INVALID_ACK;
@@ -208,7 +209,8 @@ enum reliability_result reliability_process_at(struct reliability *manager,
         return RELIABILITY_NOT_ACK;
     size_t group_index = (size_t)(group - manager->groups->group);
     struct reliability_group_state *state = &manager->state[group_index];
-    if (packet.aeth_syndrome >= 0x20 || roce_check_icrc(frame, length) != ROCE_OK) {
+    if (packet.aeth_syndrome >= 0x20 ||
+        roce_check_icrc_parsed(frame, length, &packet, backend) != ROCE_OK) {
         lock_state(state);
         ++state->counters.malformed;
         unlock_state(state);
@@ -301,8 +303,9 @@ enum reliability_result reliability_process_at(struct reliability *manager,
     retire_cumulatively_acked_stamps(state, previous_aggregate, aggregate);
     unlock_state(state);
 
-    if (roce_rewrite_ack_timed(frame, length, &group->sender, &group->ack_source,
-                               aggregate, timing) != ROCE_OK) {
+    if (roce_rewrite_parsed_timed(frame, length, &packet, &group->sender,
+                                  &group->ack_source, &aggregate, backend,
+                                  delta, verify_delta, timing) != ROCE_OK) {
         lock_state(state);
         ++state->counters.malformed;
         unlock_state(state);
@@ -314,5 +317,15 @@ enum reliability_result reliability_process_at(struct reliability *manager,
 enum reliability_result reliability_process(struct reliability *manager,
                                               uint8_t *frame, size_t length)
 {
-    return reliability_process_at(manager, frame, length, 0, NULL);
+    return reliability_process_at_backend(manager, frame, length, 0, NULL,
+                                          NULL, 0, NULL);
+}
+
+enum reliability_result reliability_process_at(struct reliability *manager,
+                                                uint8_t *frame, size_t length,
+                                                uint64_t ack_ticks,
+                                                struct roce_timing *timing)
+{
+    return reliability_process_at_backend(manager, frame, length, ack_ticks,
+                                          NULL, NULL, 0, timing);
 }

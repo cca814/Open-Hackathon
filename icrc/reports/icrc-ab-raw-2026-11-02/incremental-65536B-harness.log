@@ -1,0 +1,4 @@
+READY sender_qpn=3701 virtual_qpn=2311 receiver_qpns=2306,2307,2308,2309,2310 config=config/groups.m4.5qp.ipv4.runtime.json rates_mbps=1 seconds=1 message_size=65536 window=1 wire_packet_target=10000000
+Press Enter after Node B is running.
+STAGE mode=unpaced requested_mbps=1 achieved_mbps=1023.152999 messages=156250 wire_packets=10000000 segments_per_message=64 bytes=65536 duration_ms=80066.227 rtt_avg_us=446.297 rtt_p50_us=441.531 rtt_p99_us=453.073 rtt_max_us=451428.069 receivers=5 window=1 per_receiver_cqes=156250 total_receiver_cqes=781250 sender_cqes=156250
+PASS stages=1 total_messages=156250 receivers=5 receiver_parity=true sender_parity=true

@@ -12,7 +12,9 @@ int worker_init(struct worker *w, unsigned queue_id,
             return -1;
     }
     *w = (struct worker){.slots = slots, .slot_count = count,
-                         .queue_id = queue_id, .tx = tx};
+                         .queue_id = queue_id, .tx = tx,
+                         .icrc = icrc_backend_portable(),
+                         .ipv4_udp_checksum_enabled = true};
     for (size_t i = 0; i < count; ++i) {
         slots[i].length = 0;
         slots[i].generation = 0;
@@ -44,6 +46,34 @@ int worker_set_clock(struct worker *w, struct worker_clock clock)
         w->pending || w->stopping)
         return -1;
     w->clock = clock;
+    return 0;
+}
+
+int worker_set_icrc_backend(struct worker *w, const struct icrc_backend *backend)
+{
+    if (!w || !w->slots || !backend || !backend->name || !backend->crc32 ||
+        w->stats.rx_packets || w->pending || w->stopping)
+        return -1;
+    w->icrc = backend;
+    return 0;
+}
+
+int worker_set_icrc_delta(struct worker *w, const struct icrc_delta *delta,
+                          bool verify)
+{
+    if (!w || !w->slots || !delta || w->stats.rx_packets || w->pending ||
+        w->stopping)
+        return -1;
+    w->icrc_delta = delta;
+    w->verify_icrc_delta = verify;
+    return 0;
+}
+
+int worker_set_ipv4_udp_checksum(struct worker *w, bool enabled)
+{
+    if (!w || !w->slots || w->stats.rx_packets || w->pending || w->stopping)
+        return -1;
+    w->ipv4_udp_checksum_enabled = enabled;
     return 0;
 }
 
@@ -110,7 +140,7 @@ static int fanout(struct worker *w, const struct worker_rx *rx,
         else ++w->stats.drop_malformed;
         return 1;
     }
-    if (roce_check_icrc(w->scratch, rx->length) != ROCE_OK) {
+    if (roce_check_icrc_parsed(w->scratch, rx->length, &packet, w->icrc) != ROCE_OK) {
         ++w->stats.drop_icrc;
         return 1;
     }
@@ -135,25 +165,30 @@ static int fanout(struct worker *w, const struct worker_rx *rx,
         }
         memcpy(slot->data, w->scratch, rx->length);
         int rewrite_status;
+        const uint32_t *translated_psn = NULL;
+        uint32_t member_psn = 0;
         struct roce_timing timing = {
             .read_ticks = w->clock.read_ticks,
             .context = w->clock.context,
+            .disable_ipv4_udp_checksum = !w->ipv4_udp_checksum_enabled,
         };
         if (group->reliable) {
             uint32_t offset = (packet.psn - group->sender_initial_psn) & ROCE_PSN_MASK;
-            uint32_t member_psn =
-                (w->groups->member_initial_psn[member] + offset) & ROCE_PSN_MASK;
-            rewrite_status = roce_rewrite_psn_timed(
-                slot->data, rx->length, &w->groups->member[member], member_psn,
-                &timing);
-        } else {
-            rewrite_status = roce_rewrite_timed(
-                slot->data, rx->length, &w->groups->member[member], &timing);
+            member_psn = (w->groups->member_initial_psn[member] + offset) &
+                ROCE_PSN_MASK;
+            translated_psn = &member_psn;
         }
+        rewrite_status = roce_rewrite_parsed_timed(
+            slot->data, rx->length, &packet, &w->groups->member[member],
+            NULL, translated_psn, w->icrc, w->icrc_delta,
+            w->verify_icrc_delta, &timing);
         if (timing.measured)
             metric_observe(&w->stats.icrc_compute, timing.icrc_ticks);
         if (rewrite_status != ROCE_OK) {
-            ++w->stats.drop_malformed;
+            if (rewrite_status == ROCE_BAD_ICRC)
+                ++w->stats.icrc_verify_fail;
+            else
+                ++w->stats.drop_malformed;
             ++w->members[member].drops;
             all_submitted = false;
             continue;
@@ -184,9 +219,11 @@ static int feedback(struct worker *w, const struct worker_rx *rx, bool *handled)
     struct roce_timing timing = {
         .read_ticks = w->clock.read_ticks,
         .context = w->clock.context,
+        .disable_ipv4_udp_checksum = !w->ipv4_udp_checksum_enabled,
     };
-    enum reliability_result result = reliability_process_at(
-        w->reliability, w->scratch, rx->length, ack_ticks, &timing);
+    enum reliability_result result = reliability_process_at_backend(
+        w->reliability, w->scratch, rx->length, ack_ticks, w->icrc,
+        w->icrc_delta, w->verify_icrc_delta, &timing);
     if (timing.measured)
         metric_observe(&w->stats.icrc_compute, timing.icrc_ticks);
     if (result == RELIABILITY_NOT_ACK)

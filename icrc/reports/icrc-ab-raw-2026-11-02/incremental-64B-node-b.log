@@ -1,0 +1,93 @@
+node-b-1  | EAL: Detected CPU lcores: 16
+node-b-1  | EAL: Detected NUMA nodes: 1
+node-b-1  | EAL: Detected shared linkage of DPDK
+node-b-1  | EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+node-b-1  | EAL: Selected IOVA mode 'VA'
+node-b-1  | Loaded 1 groups / 5 members
+node-b-1  | ICRC backend=dpdk-neon-full strategy=incremental
+node-b-1  | IPv4 UDP checksum rewrite=disabled
+node-b-1  | Metrics enabled; tsc_hz=299981790
+node-b-1  | port0 PCI=03:00.0 DPDK-port=6
+node-b-1  | port1 PCI=03:00.1 DPDK-port=7
+node-b-1  | Eight bidirectional workers running; forward traffic may rewrite/fan out; matching reverse ACKs aggregate.
+node-b-1  | direction=forward queue=0 rx=0 submitted=0 completed=0 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=forward queue=0 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=0 ack_suppressed=0 ack_invalid=0
+node-b-1  | direction=forward queue=0 group=milestone-4-live-ipv4 member=0 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=0 group=milestone-4-live-ipv4 member=1 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=0 group=milestone-4-live-ipv4 member=2 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=0 group=milestone-4-live-ipv4 member=3 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=0 group=milestone-4-live-ipv4 member=4 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=reverse queue=0 rx=10000000 submitted=13370 completed=13370 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=reverse queue=0 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=13370 ack_suppressed=9986630 ack_invalid=0
+node-b-1  | metric=icrc_compute_reverse_q0 samples=13370 avg_ns=90 min_ns=23 p50_upper_ns=50 p99_upper_ns=423 max_ns=2866
+node-b-1  | direction=forward queue=1 rx=0 submitted=0 completed=0 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=forward queue=1 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=0 ack_suppressed=0 ack_invalid=0
+node-b-1  | direction=forward queue=1 group=milestone-4-live-ipv4 member=0 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=1 group=milestone-4-live-ipv4 member=1 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=1 group=milestone-4-live-ipv4 member=2 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=1 group=milestone-4-live-ipv4 member=3 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=1 group=milestone-4-live-ipv4 member=4 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=reverse queue=1 rx=0 submitted=0 completed=0 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=reverse queue=1 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=0 ack_suppressed=0 ack_invalid=0
+node-b-1  | direction=forward queue=2 rx=2 submitted=0 completed=0 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=forward queue=2 malformed=2 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=0 ack_suppressed=0 ack_invalid=0
+node-b-1  | direction=forward queue=2 group=milestone-4-live-ipv4 member=0 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=2 group=milestone-4-live-ipv4 member=1 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=2 group=milestone-4-live-ipv4 member=2 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=2 group=milestone-4-live-ipv4 member=3 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=2 group=milestone-4-live-ipv4 member=4 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=reverse queue=2 rx=0 submitted=0 completed=0 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=reverse queue=2 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=0 ack_suppressed=0 ack_invalid=0
+node-b-1  | direction=forward queue=3 rx=0 submitted=0 completed=0 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=forward queue=3 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=0 ack_suppressed=0 ack_invalid=0
+node-b-1  | direction=forward queue=3 group=milestone-4-live-ipv4 member=0 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=3 group=milestone-4-live-ipv4 member=1 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=3 group=milestone-4-live-ipv4 member=2 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=3 group=milestone-4-live-ipv4 member=3 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=3 group=milestone-4-live-ipv4 member=4 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=reverse queue=3 rx=0 submitted=0 completed=0 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=reverse queue=3 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=0 ack_suppressed=0 ack_invalid=0
+node-b-1  | direction=forward queue=4 rx=0 submitted=0 completed=0 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=forward queue=4 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=0 ack_suppressed=0 ack_invalid=0
+node-b-1  | direction=forward queue=4 group=milestone-4-live-ipv4 member=0 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=4 group=milestone-4-live-ipv4 member=1 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=4 group=milestone-4-live-ipv4 member=2 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=4 group=milestone-4-live-ipv4 member=3 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=4 group=milestone-4-live-ipv4 member=4 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=reverse queue=4 rx=0 submitted=0 completed=0 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=reverse queue=4 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=0 ack_suppressed=0 ack_invalid=0
+node-b-1  | direction=forward queue=5 rx=10000000 submitted=50000000 completed=50000000 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=forward queue=5 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=0 ack_suppressed=0 ack_invalid=0
+node-b-1  | metric=icrc_compute_forward_q5 samples=50000000 avg_ns=26 min_ns=13 p50_upper_ns=50 p99_upper_ns=50 max_ns=44482
+node-b-1  | direction=forward queue=5 group=milestone-4-live-ipv4 member=0 submitted=10000000 completed=10000000 errors=0 drops=0
+node-b-1  | direction=forward queue=5 group=milestone-4-live-ipv4 member=1 submitted=10000000 completed=10000000 errors=0 drops=0
+node-b-1  | direction=forward queue=5 group=milestone-4-live-ipv4 member=2 submitted=10000000 completed=10000000 errors=0 drops=0
+node-b-1  | direction=forward queue=5 group=milestone-4-live-ipv4 member=3 submitted=10000000 completed=10000000 errors=0 drops=0
+node-b-1  | direction=forward queue=5 group=milestone-4-live-ipv4 member=4 submitted=10000000 completed=10000000 errors=0 drops=0
+node-b-1  | direction=reverse queue=5 rx=19999847 submitted=9814285 completed=9814285 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=reverse queue=5 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=9814285 ack_suppressed=10185562 ack_invalid=0
+node-b-1  | metric=icrc_compute_reverse_q5 samples=9814285 avg_ns=30 min_ns=20 p50_upper_ns=50 p99_upper_ns=50 max_ns=31921
+node-b-1  | direction=forward queue=6 rx=0 submitted=0 completed=0 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=forward queue=6 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=0 ack_suppressed=0 ack_invalid=0
+node-b-1  | direction=forward queue=6 group=milestone-4-live-ipv4 member=0 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=6 group=milestone-4-live-ipv4 member=1 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=6 group=milestone-4-live-ipv4 member=2 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=6 group=milestone-4-live-ipv4 member=3 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=6 group=milestone-4-live-ipv4 member=4 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=reverse queue=6 rx=19999430 submitted=172288 completed=172288 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=reverse queue=6 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=172288 ack_suppressed=19827142 ack_invalid=0
+node-b-1  | metric=icrc_compute_reverse_q6 samples=172288 avg_ns=33 min_ns=20 p50_upper_ns=50 p99_upper_ns=103 max_ns=4476
+node-b-1  | direction=forward queue=7 rx=0 submitted=0 completed=0 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=forward queue=7 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=0 ack_suppressed=0 ack_invalid=0
+node-b-1  | direction=forward queue=7 group=milestone-4-live-ipv4 member=0 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=7 group=milestone-4-live-ipv4 member=1 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=7 group=milestone-4-live-ipv4 member=2 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=7 group=milestone-4-live-ipv4 member=3 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=forward queue=7 group=milestone-4-live-ipv4 member=4 submitted=0 completed=0 errors=0 drops=0
+node-b-1  | direction=reverse queue=7 rx=0 submitted=0 completed=0 tx_errors=0 drops=0 pending=0
+node-b-1  | direction=reverse queue=7 malformed=0 unsupported=0 bad_icrc=0 unknown_group=0 icrc_verify_fail=0 ack_forwarded=0 ack_suppressed=0 ack_invalid=0
+node-b-1  | metric=icrc_compute_total samples=59999943 avg_ns=26 min_ns=13 p50_upper_ns=50 p99_upper_ns=50 max_ns=44482
+node-b-1  | group=milestone-4-live-ipv4 ack_received=49999277 ack_forwarded=9999943 ack_suppressed=39999334 ack_stale=0 ack_malformed=0 ack_delayed=0 rtt_overwrites=0 rtt_missed=0 agg_ack_psn=11193045 tri_port=0
+node-b-1  | metric=traffic_rtt_group_milestone-4-live-ipv4 samples=9999943 avg_ns=44046 min_ns=4470 p50_upper_ns=54613 p99_upper_ns=109229 max_ns=2896709
+node-b-1  | direction=forward flow_matched_packets=10000002 bytes=1220000654
+node-b-1  | direction=reverse flow_matched_packets=49999277 bytes=3099955174

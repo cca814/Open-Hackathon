@@ -26,6 +26,8 @@
 #include "dpdk_rx.h"
 #include "eth_tx.h"
 #include "flow.h"
+#include "icrc_delta.h"
+#include "icrc_dpdk.h"
 
 #include <inttypes.h>
 #include <signal.h>
@@ -125,9 +127,11 @@ static void print_worker_stats(const char *direction, unsigned queue,
            worker->pending);
     printf("direction=%s queue=%u malformed=%" PRIu64 " unsupported=%" PRIu64
            " bad_icrc=%" PRIu64 " unknown_group=%" PRIu64
+           " icrc_verify_fail=%" PRIu64
            " ack_forwarded=%" PRIu64 " ack_suppressed=%" PRIu64
            " ack_invalid=%" PRIu64 "\n", direction, queue,
-           s->drop_malformed, s->drop_unsupported, s->drop_icrc, s->drop_unknown_group,
+           s->drop_malformed, s->drop_unsupported, s->drop_icrc,
+           s->drop_unknown_group, s->icrc_verify_fail,
            s->ack_forwarded, s->ack_suppressed, s->ack_invalid);
     if (s->icrc_compute.count) {
         char metric_name[64];
@@ -255,6 +259,45 @@ int main(int argc, char **argv)
         free(groups);
         return 1;
     }
+    struct icrc_dpdk *dpdk_icrc = NULL;
+    struct icrc_delta *delta_icrc = NULL;
+    const struct icrc_backend *icrc = icrc_backend_portable();
+    const char *icrc_setting = getenv("NODE_B_ICRC_BACKEND");
+    if (!icrc_setting)
+        icrc_setting = "dpdk-neon";
+    bool incremental = strcmp(icrc_setting, "incremental") == 0 ||
+        strcmp(icrc_setting, "incremental-verify") == 0;
+    bool verify_delta = strcmp(icrc_setting, "incremental-verify") == 0;
+    if (strcmp(icrc_setting, "dpdk-neon") == 0 || incremental) {
+        if (icrc_dpdk_create(&dpdk_icrc) == 0)
+            icrc = icrc_dpdk_backend(dpdk_icrc);
+        else
+            fprintf(stderr, "DPDK NEON ICRC unavailable or failed self-test; "
+                    "using portable-bitwise\n");
+    } else if (strcmp(icrc_setting, "portable") != 0) {
+        fprintf(stderr, "NODE_B_ICRC_BACKEND must be dpdk-neon, portable, "
+                "incremental-verify, or incremental\n");
+        rte_eal_cleanup();
+        if (reliability_enabled) reliability_destroy(&reliability);
+        free(groups);
+        return 2;
+    }
+    if (incremental && icrc_delta_create(NODE_B_MAX_FRAME, &delta_icrc) != 0) {
+        fprintf(stderr, "Cannot initialize incremental ICRC correction table\n");
+        icrc_dpdk_destroy(&dpdk_icrc);
+        rte_eal_cleanup();
+        if (reliability_enabled) reliability_destroy(&reliability);
+        free(groups);
+        return 1;
+    }
+    printf("ICRC backend=%s strategy=%s\n", icrc->name,
+           incremental ? (verify_delta ? "incremental-verify" : "incremental") :
+                         "full-recompute");
+    const char *ipv4_udp_setting = getenv("NODE_B_IPV4_UDP_CHECKSUM");
+    bool ipv4_udp_checksum_enabled = !ipv4_udp_setting ||
+        strcmp(ipv4_udp_setting, "0") != 0;
+    printf("IPv4 UDP checksum rewrite=%s\n",
+           ipv4_udp_checksum_enabled ? "enabled" : "disabled");
     uint64_t ticks_per_second = rte_get_tsc_hz();
     const char *metrics_setting = getenv("NODE_B_METRICS");
     bool metrics_enabled = !metrics_setting || strcmp(metrics_setting, "0") != 0;
@@ -310,10 +353,23 @@ int main(int argc, char **argv)
         runners[i].reverse_port = ports[1];
         DOCA_CHECK(eth_tx_open(devices[1], i, 256, 2048,
                               &runners[i].forward, &runners[i].forward_tx));
-        if (worker_set_groups(&runners[i].forward, groups) != 0)
+        if (worker_set_groups(&runners[i].forward, groups) != 0 ||
+            worker_set_icrc_backend(&runners[i].forward, icrc) != 0 ||
+            worker_set_ipv4_udp_checksum(&runners[i].forward,
+                                         ipv4_udp_checksum_enabled) != 0)
             goto cleanup;
         DOCA_CHECK(eth_tx_open(devices[0], i, 256, 2048,
                               &runners[i].reverse, &runners[i].reverse_tx));
+        if (worker_set_icrc_backend(&runners[i].reverse, icrc) != 0 ||
+            worker_set_ipv4_udp_checksum(&runners[i].reverse,
+                                         ipv4_udp_checksum_enabled) != 0)
+            goto cleanup;
+        if (delta_icrc &&
+            (worker_set_icrc_delta(&runners[i].forward, delta_icrc,
+                                   verify_delta) != 0 ||
+             worker_set_icrc_delta(&runners[i].reverse, delta_icrc,
+                                   verify_delta) != 0))
+            goto cleanup;
         if (metrics_enabled) {
             struct worker_clock clock = {read_tsc, NULL};
             if (worker_set_clock(&runners[i].forward, clock) != 0 ||
@@ -429,6 +485,8 @@ cleanup:
     for (unsigned i = 0; i < 2; ++i)
         if (devices[i] && doca_dev_close(devices[i]) != DOCA_SUCCESS)
             return 1;
+    icrc_delta_destroy(&delta_icrc);
+    icrc_dpdk_destroy(&dpdk_icrc);
     if (rte_eal_cleanup() < 0)
         return 1;
     if (reliability_enabled)

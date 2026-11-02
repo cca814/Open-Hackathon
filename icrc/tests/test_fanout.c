@@ -45,8 +45,11 @@ int main(int argc, char **argv)
     struct backend backend = {0};
     struct worker_tx tx = {&backend, submit, progress};
     struct worker *w = calloc(1, sizeof(*w)); assert(w);
+    struct icrc_delta *delta = NULL;
+    assert(icrc_delta_create(NODE_B_MAX_FRAME, &delta) == 0);
     assert(worker_init(w, 0, slots, 2, tx) == 0);
     assert(worker_set_groups(w, groups) == 0);
+    assert(worker_set_icrc_delta(w, delta, true) == 0);
     assert(worker_forward(w, &rx) == 0 && packet.released == 1 && w->pending == 2);
     assert(worker_set_groups(w, NULL) == -1);
     assert(memcmp(packet.data, original, packet.length) == 0);
@@ -68,10 +71,35 @@ int main(int argc, char **argv)
     assert(w->members[0].completed == 1 && w->members[1].errors == 1);
     worker_stop(w); assert(worker_drained(w));
 
+    /* Controlled IPv4 benchmark mode explicitly emits UDP checksum zero and
+     * skips recomputation, while preserving the independently checked ICRC. */
+    backend = (struct backend){0};
+    assert(worker_init(w, 0, slots, 2, tx) == 0);
+    assert(worker_set_groups(w, groups) == 0);
+    assert(worker_set_icrc_delta(w, delta, true) == 0);
+    assert(worker_set_ipv4_udp_checksum(w, false) == 0);
+    struct roce_packet input_parsed;
+    assert(roce_parse(packet.data, packet.length, &input_parsed) == ROCE_OK);
+    assert(input_parsed.destination.family == ROCE_IPV4);
+    packet.data[input_parsed.udp + 6] = 0x12;
+    packet.data[input_parsed.udp + 7] = 0x34;
+    assert(worker_forward(w, &rx) == 0 && w->pending == 2);
+    for (unsigned i = 0; i < 2; ++i) {
+        struct roce_packet output_parsed;
+        assert(roce_parse(storage[i], packet.length, &output_parsed) == ROCE_OK);
+        assert(storage[i][output_parsed.udp + 6] == 0);
+        assert(storage[i][output_parsed.udp + 7] == 0);
+        assert(roce_check_icrc(storage[i], packet.length) == ROCE_OK);
+        assert(worker_complete(w, i, slots[i].generation, true) == 0);
+    }
+    worker_stop(w); assert(worker_drained(w));
+    memcpy(packet.data, original, packet.length);
+
     /* Submission failure of member 0 still allows member 1, with no aliasing. */
     backend = (struct backend){.fail_first = true};
     assert(worker_init(w, 0, slots, 2, tx) == 0);
     assert(worker_set_groups(w, groups) == 0);
+    assert(worker_set_icrc_delta(w, delta, true) == 0);
     assert(worker_forward(w, &rx) == 0 && w->pending == 1);
     assert(w->members[0].drops == 1 && w->members[1].submitted == 1);
     assert(worker_complete(w, 0, slots[0].generation, true) == 0);
@@ -90,7 +118,8 @@ int main(int argc, char **argv)
     packet.length = rx.length = 1;
     assert(worker_forward(w, &rx) == 1 && w->stats.drop_malformed == 1);
     worker_stop(w); assert(worker_drained(w));
-    assert(packet.released == 7);
+    assert(packet.released == 8);
+    icrc_delta_destroy(&delta);
     free(groups); free(w);
     return 0;
 }

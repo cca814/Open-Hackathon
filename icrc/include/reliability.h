@@ -7,6 +7,9 @@
 #include "groups.h"
 #include "metrics.h"
 
+struct icrc_backend;
+struct icrc_delta;
+
 #define ROCE_PSN_MASK 0x00ffffffu
 #define ROCE_PSN_HALF 0x00800000u
 #define RELIABILITY_RTT_SLOTS RELIABLE_ACK_WINDOW
@@ -67,6 +70,11 @@ enum reliability_result reliability_process_at(struct reliability *manager,
                                                 uint8_t *frame, size_t length,
                                                 uint64_t ack_ticks,
                                                 struct roce_timing *timing);
+enum reliability_result reliability_process_at_backend(
+    struct reliability *manager, uint8_t *frame, size_t length,
+    uint64_t ack_ticks, const struct icrc_backend *backend,
+    const struct icrc_delta *delta, int verify_delta,
+    struct roce_timing *timing);
 int reliability_record_send(struct reliability *manager,
                             const struct multicast_group *group,
                             uint32_t sender_psn, uint64_t send_ticks);
