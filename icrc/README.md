@@ -83,8 +83,9 @@ wire tests on DOCA 3.5.0098.
   and drain on shutdown. Omitting `--groups` keeps unchanged forwarding.
 - `src/dpdk_rx.c`: burst polling, bounded multi-segment mbuf copying and release,
   and TX progress even when there are no incoming packets.
-- `src/roce.c` and `src/icrc.c`: bounded RC SEND/ACK parsing, source/destination,
-  QPN and PSN rewriting, full IPv4/IPv6 ICRC and IP/UDP checksum recomputation.
+- `src/roce.c`, `src/icrc.c`, `src/icrc_dpdk.c`, and `src/icrc_delta.c`:
+  bounded RC SEND/ACK parsing, source/destination, QPN and PSN rewriting,
+  portable or Arm NEON full ICRC, incremental correction, and IP/UDP checksums.
 - `src/groups.c`: startup JSON validation and immutable forward/feedback lookup.
 - `src/reliability.c`: shared, synchronized 24-bit PSN tracking, Cepheus
   minimum-frontier ACK aggregation and `triPort` suppression.
@@ -331,7 +332,7 @@ Portable validation:
 ./tests/run_local.sh
 cc -std=c11 -Wall -Wextra -Werror -pedantic -g \
   -fsanitize=address,undefined -Iinclude \
-  src/worker.c src/roce.c src/icrc.c src/groups.c src/reliability.c src/metrics.c \
+  src/worker.c src/roce.c src/icrc.c src/icrc_delta.c src/groups.c src/reliability.c src/metrics.c \
   tests/test_reliability.c -o /tmp/icrc-test-reliability-sanitized
 /tmp/icrc-test-reliability-sanitized
 ```
@@ -471,10 +472,16 @@ count rejected input frames before member selection.
 ICRC normalization follows the IPv4 behavior in
 [Linux v6.12 RXE](https://github.com/torvalds/linux/blob/v6.12/drivers/infiniband/sw/rxe/rxe_icrc.c):
 the virtual all-ones LRH prefix, normalized IPv4-or-IPv6/UDP/BTH invariant fields,
-then transport headers, payload and pad, with a little-endian trailer. The current
-portable implementation uses full bitwise CRC recomputation; no line-rate claim
-is made. Synthetic zlib agreement is established; independent ConnectX captures
-and hardware acceptance remain required.
+then transport headers, payload and pad, with a little-endian trailer. Portable
+builds retain bitwise full recomputation as the reference. Hardware builds
+default to DPDK `rte_net_crc` with the Arm NEON CRC-32 backend after a startup
+differential self-test. `NODE_B_ICRC_BACKEND=portable` selects the reference;
+`incremental-verify` corrects changed address/QPN/PSN bytes and compares every
+result with full recomputation; `incremental` omits that comparison and remains
+gated on target validation. Input ICRC validation always uses a full backend.
+No line-rate claim is made. Synthetic zlib agreement is established;
+independent ConnectX captures and hardware acceptance remain required. See
+[`docs/icrc-optimization-plan.md`](docs/icrc-optimization-plan.md).
 
 Node A still owns QP setup and PSN/peer state. Node B leaves reverse UDP/4791
 traffic unchanged for best-effort groups. For a reliable group, it aggregates

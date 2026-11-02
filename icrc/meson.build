@@ -3,7 +3,7 @@ project('node-b-rocev2', 'c', version: '0.1.0',
 
 inc = include_directories('include')
 packet = library('node_b_packet',
-  ['src/roce.c', 'src/icrc.c', 'src/groups.c', 'src/reliability.c',
+  ['src/roce.c', 'src/icrc.c', 'src/icrc_delta.c', 'src/groups.c', 'src/reliability.c',
    'src/metrics.c'],
   include_directories: inc)
 worker = static_library('node_b_worker', 'src/worker.c', include_directories: inc, link_with: packet)
@@ -25,7 +25,8 @@ if get_option('hardware')
   doca_eth = dependency('doca-eth')
   doca_bridge = dependency('doca-dpdk-bridge')
   dpdk = dependency('libdpdk')
-  hardware = static_library('node_b_hardware', ['src/flow.c', 'src/eth_tx.c', 'src/dpdk_rx.c'],
+  hardware = static_library('node_b_hardware',
+    ['src/flow.c', 'src/eth_tx.c', 'src/dpdk_rx.c', 'src/icrc_dpdk.c'],
     include_directories: inc,
     c_args: ['-D_GNU_SOURCE', '-DDOCA_ALLOW_EXPERIMENTAL_API', '-DDOCA_ALLOW_DEPRECATED_API'],
     dependencies: [doca_common, doca_flow, doca_eth, doca_bridge, dpdk], link_with: worker)
@@ -52,3 +53,12 @@ test('ack-aggregation', reliability_test)
 metrics_test = executable('test_metrics', ['tests/test_metrics.c', 'src/metrics.c'],
   include_directories: inc, c_args: ['-UNDEBUG'])
 test('performance-metrics', metrics_test)
+
+icrc_test = executable('test_icrc', 'tests/test_icrc.c',
+  include_directories: inc, link_with: packet, c_args: ['-UNDEBUG'])
+test('icrc-backends', icrc_test)
+
+icrc_delta_test = executable('test_icrc_delta',
+  ['tests/test_icrc_delta.c', 'src/icrc.c', 'src/icrc_delta.c'],
+  include_directories: inc, c_args: ['-UNDEBUG'])
+test('icrc-incremental-delta', icrc_delta_test)

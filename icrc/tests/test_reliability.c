@@ -288,8 +288,11 @@ int main(void)
     struct submit_backend backend = {0};
     struct worker worker;
     struct worker_tx tx = {&backend, submit_packet, progress_packets};
+    struct icrc_delta *delta = NULL;
+    assert(icrc_delta_create(NODE_B_MAX_FRAME, &delta) == 0);
     assert(worker_init(&worker, 0, &slot, 1, tx) == 0);
     assert(worker_set_reliability(&worker, &manager) == 0);
+    assert(worker_set_icrc_delta(&worker, delta, true) == 0);
     struct fake_clock clock = {.ticks = 100, .step = 10};
     assert(worker_set_clock(&worker,
                             (struct worker_clock){read_fake_clock, &clock}) == 0);
@@ -314,6 +317,7 @@ int main(void)
     assert(worker_complete(&worker, 0, slot.generation, true) == 0);
     worker_stop(&worker);
     assert(worker_drained(&worker));
+    icrc_delta_destroy(&delta);
     reliability_destroy(&manager);
 
     /* IPv4 uses the same PSN/ACK state while additionally requiring IPv4,
@@ -326,7 +330,10 @@ int main(void)
            RELIABILITY_SUPPRESS_ACK);
     length = make_ack4(frame, &groups.member[1], &groups.group[0].sender, 2000, 0);
     clock = (struct fake_clock){.ticks = 200, .step = 10};
-    struct roce_timing timing = {read_fake_clock, &clock, 0, 0};
+    struct roce_timing timing = {
+        .read_ticks = read_fake_clock,
+        .context = &clock,
+    };
     assert(reliability_process_at(&manager, frame, length, 175, &timing) ==
            RELIABILITY_FORWARD_ACK);
     assert(roce_parse(frame, length, &parsed) == ROCE_OK);
